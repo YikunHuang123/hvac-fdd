@@ -120,3 +120,6 @@ dmypy.json
 
 # Data files
 data/
+
+# Model
+models/
