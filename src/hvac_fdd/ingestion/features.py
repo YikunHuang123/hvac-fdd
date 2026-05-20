@@ -28,7 +28,7 @@ _POWER_COL = "sf_power_w"
 
 # Lag-1 features (1 step = 1 minute at the LBNL 1-min sampling rate).
 _LAG_COLS: list[str] = [
-    "temp_supply_celsius",
+    "sa_oa_temp_diff_c",
     "chwc_valve_pct",
     "oa_damper_pct",
 ]
@@ -49,7 +49,7 @@ ENG_FEATURE_COLUMNS: list[str] = [
     "sa_temp_error_c_15_mean",
     "sa_temp_error_c_60_mean",
     "sf_power_w_60_mean",
-    "temp_supply_celsius_lag1",
+    "sa_oa_temp_diff_c_lag1",
     "chwc_valve_pct_lag1",
     "oa_damper_pct_lag1",
 ]
@@ -113,6 +113,7 @@ def build_feature_set(df: pd.DataFrame, settings: Settings) -> pd.DataFrame:
     df["sa_temp_error_c"] = df["temp_supply_celsius"] - df["temp_supply_setpoint_c"]
     df["ma_oa_delta_c"]   = df["temp_mixed_celsius"]  - df["temp_outside_celsius"]
     df["ra_sa_delta_c"]   = df["temp_return_celsius"] - df["temp_supply_celsius"]
+    df["sa_oa_temp_diff_c"] = df["temp_supply_celsius"] - df["temp_outside_celsius"]
 
     # Ensure rolling and lag columns are numeric and use numpy backend (float64)
     # to avoid pyarrow-related memory leaks during groupby.transform().

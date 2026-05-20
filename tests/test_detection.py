@@ -84,7 +84,8 @@ def _make_feature_df(
             "sf_power_w_60_mean":                   1_000.0,
             "sf_power_w_60_std":                    100.0,
             # Lag features
-            "temp_supply_celsius_lag1":             13.0,
+            "sa_oa_temp_diff_c":                    3.0,
+            "sa_oa_temp_diff_c_lag1":               3.0,
             "chwc_valve_pct_lag1":                  50.0,
             "oa_damper_pct_lag1":                   50.0,
         }
