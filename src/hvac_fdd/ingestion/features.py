@@ -114,6 +114,15 @@ def build_feature_set(df: pd.DataFrame, settings: Settings) -> pd.DataFrame:
     df["ma_oa_delta_c"]   = df["temp_mixed_celsius"]  - df["temp_outside_celsius"]
     df["ra_sa_delta_c"]   = df["temp_return_celsius"] - df["temp_supply_celsius"]
 
+    # Ensure rolling and lag columns are numeric and use numpy backend (float64)
+    # to avoid pyarrow-related memory leaks during groupby.transform().
+    # We also ensure zone_id is a standard string to avoid pyarrow-related
+    # hashing issues in groupby.
+    df["zone_id"] = df["zone_id"].astype(str)
+    for c in set(_ROLLING_COLS + [_POWER_COL] + _LAG_COLS):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").astype("float64")
+
     # ── C. Rolling statistics (grouped by zone to avoid cross-zone leakage) ──
     # At 1-min sampling: window=15 → 15-min, window=60 → 60-min.
     # min_periods=1 prevents NaN at the start of each zone's history.

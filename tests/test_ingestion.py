@@ -357,3 +357,29 @@ class TestBuildFeatureSet:
         df = _make_normalized_frame(10).drop(columns=["chwc_valve_pct"])
         with pytest.raises(FeatureEngineeringError, match="Missing columns"):
             build_feature_set(df, test_settings)
+
+    def test_pyarrow_backend_compatibility(self, test_settings):
+        """
+        Verify that even if input columns use pyarrow dtypes, the rolling
+        columns are cast to float64 (numpy) to avoid memory leaks.
+        """
+        try:
+            import pyarrow as pa
+        except ImportError:
+            pytest.skip("pyarrow not installed")
+
+        df = _make_normalized_frame(10)
+        # Convert some source columns to pyarrow dtypes
+        df["chwc_valve_pct"] = pd.Series(df["chwc_valve_pct"], dtype="float64[pyarrow]")
+        df["temp_supply_celsius"] = pd.Series(df["temp_supply_celsius"], dtype="float64[pyarrow]")
+        
+        result = build_feature_set(df, test_settings)
+        
+        # Verify target columns are cast to float64 (numpy backend)
+        # "valve_tracking_err" is derived from "chwc_valve_pct"
+        assert result["valve_tracking_err"].dtype == "float64"
+        assert not isinstance(result["valve_tracking_err"].dtype, pd.ArrowDtype)
+        
+        # Verify rolling columns are present and numeric
+        assert "valve_tracking_err_15_mean" in result.columns
+        assert result["valve_tracking_err_15_mean"].dtype == "float64"
