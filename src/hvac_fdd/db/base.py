@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 class Base(DeclarativeBase):
@@ -13,11 +14,21 @@ def make_engine(
 ) -> Engine:
     """Create a SQLAlchemy engine.
 
-    Pool sizing parameters are omitted for SQLite, which uses a single-file
-    connection model incompatible with connection pool sizing.
+    SQLite in-memory URLs receive two special-case overrides:
+    - StaticPool pins all requests to a single connection so every caller
+      sees the same in-memory database (each new connection is a blank DB).
+    - check_same_thread=False lets the connection be used from FastAPI's
+      threadpool workers when a session is injected via dependency_overrides.
+    Regular file-path SQLite and non-SQLite URLs use the normal QueuePool.
     """
     kwargs: dict = {"pool_pre_ping": True}
-    if not str(url).startswith("sqlite"):
+    url_str = str(url)
+    if url_str == "sqlite:///:memory:" or url_str.startswith("sqlite:///:memory:"):
+        kwargs["connect_args"] = {"check_same_thread": False}
+        kwargs["poolclass"] = StaticPool
+    elif url_str.startswith("sqlite"):
+        kwargs["connect_args"] = {"check_same_thread": False}
+    else:
         kwargs["pool_size"] = pool_size
         kwargs["max_overflow"] = max_overflow
     return create_engine(url, **kwargs)
