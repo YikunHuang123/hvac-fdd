@@ -423,10 +423,6 @@ hvac-fdd/
 
 ## 🔮 Follow-up Development Plans
 
-- **Real-Time Streaming** — Replace batch pipeline with a streaming ingestion path to support live BMS data feeds.
-- **Active Learning Loop** — Surface uncertain isolation-forest predictions to a human reviewer; fold confirmed labels back into classifier retraining.
-- **Multi-AHU Support** — Extend the data loader and schema to handle multi-unit buildings with per-unit isolation and cross-unit correlation.
-- **Containerisation** — Docker Compose stack with pre-configured PostgreSQL, API, and dashboard services (in progress).
 
 ---
 
