@@ -214,7 +214,7 @@ The project uses the **LBNL FDD Data Sets — SDAHU (Single-Duct Air Handling Un
 
 - Python 3.11+
 - PostgreSQL 16+
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
+- [Conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) (Anaconda or Miniconda)
 
 ### Steps
 
@@ -225,18 +225,17 @@ git clone https://github.com/YikunHuang123/hvac-fdd.git
 cd hvac-fdd
 ```
 
-**2. Create and activate a virtual environment**
+**2. Create and activate a conda environment**
 
 ```bash
-uv venv
-source .venv/bin/activate   # macOS / Linux
-# .venv\Scripts\activate    # Windows
+conda create -n hvac python=3.11 -y
+conda activate hvac
 ```
 
 **3. Install dependencies**
 
 ```bash
-uv pip install -e ".[dev]"
+pip install -e ".[dev]"
 ```
 
 **4. Configure environment**
