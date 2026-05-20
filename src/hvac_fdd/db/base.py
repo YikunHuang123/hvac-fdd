@@ -1,12 +1,27 @@
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, Engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
 
 class Base(DeclarativeBase):
     pass
 
-def make_engine(url: str):
-    return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=10)
 
-def make_session_factory(engine):
+def make_engine(
+    url: str,
+    pool_size: int = 5,
+    max_overflow: int = 10,
+) -> Engine:
+    """
+    Create a SQLAlchemy engine.
+    """
+    kwargs: dict = {
+        "pool_pre_ping": True,
+        "pool_size": pool_size,
+        "max_overflow": max_overflow,
+    }
+    return create_engine(url, **kwargs)
+
+
+def make_session_factory(engine: Engine) -> sessionmaker[Session]:
+    """Return a session factory bound to the given engine."""
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)
