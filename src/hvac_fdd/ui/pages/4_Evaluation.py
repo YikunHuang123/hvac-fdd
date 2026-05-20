@@ -32,17 +32,6 @@ inject_css()
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown(
-        """
-        <div style='font-size:0.78rem;color:#3D5070;line-height:1.6'>
-            <b style='color:#64748B'>About this page</b><br>
-            Metrics are computed client-side from stored detection events that
-            have both <code>ground_truth</code> and <code>predicted_fault</code>
-            fields populated (i.e., labelled events from the LBNL dataset).
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
     if st.button("↺  Refresh"):
         st.cache_data.clear()
         st.rerun()
@@ -88,7 +77,6 @@ def _per_class_metrics(
 page_header("📋", "Model Evaluation", "Precision, recall, F1, and confusion matrix from stored detections")
 
 healthy = _client(api_url).is_live()
-connection_banner(healthy, api_url)
 if not healthy:
     st.warning("API is not reachable.")
     st.stop()

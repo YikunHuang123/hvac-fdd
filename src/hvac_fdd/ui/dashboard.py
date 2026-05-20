@@ -74,7 +74,6 @@ items = _recent(api_url)
 # ── Page header + connection status ──────────────────────────────────────────
 
 page_header("🌡️", "HVAC Fault Detection & Diagnostics", "Real-time system monitoring overview")
-connection_banner(healthy, api_url)
 
 if not healthy:
     st.warning(

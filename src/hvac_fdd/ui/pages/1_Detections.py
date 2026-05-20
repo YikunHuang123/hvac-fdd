@@ -95,7 +95,6 @@ def _fetch(
 page_header("🔍", "Detection Events", "Browse and filter all recorded fault events")
 
 healthy = _client(api_url).is_live()
-connection_banner(healthy, api_url)
 if not healthy:
     st.warning("API is not reachable.")
     st.stop()

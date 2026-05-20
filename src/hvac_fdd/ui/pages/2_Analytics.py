@@ -71,7 +71,6 @@ def _stats(url: str) -> dict:
 page_header("📈", "Analytics & Trends", "Patterns, distributions, and equipment insights")
 
 healthy = _client(api_url).is_live()
-connection_banner(healthy, api_url)
 if not healthy:
     st.warning("API is not reachable.")
     st.stop()

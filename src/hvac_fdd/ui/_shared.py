@@ -319,6 +319,9 @@ hr { border-color: #1A2540 !important; margin: 16px 0 !important; }
 
 /* ── Hide branding ───────────────────────────────────────────────────────── */
 #MainMenu, footer { visibility: hidden !important; }
+.stAppDeployButton { display: none !important; }
+[data-testid="stHeader"] { background-color: rgba(0,0,0,0) !important; }
+div[data-testid="stToolbar"] { display: none !important; }
 </style>
 """
 
