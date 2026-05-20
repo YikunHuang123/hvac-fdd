@@ -18,6 +18,8 @@ dependencies = [
     "pyarrow>=15.0",
     "alembic>=1.13",
     "streamlit>=1.33",
+    "plotly>=5.0",
+    "requests>=2.31",
     "asyncpg>=0.29.0",
     "psycopg2-binary>=2.9",
 ]
