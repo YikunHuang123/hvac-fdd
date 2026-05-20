@@ -11,14 +11,15 @@ def make_engine(
     pool_size: int = 5,
     max_overflow: int = 10,
 ) -> Engine:
+    """Create a SQLAlchemy engine.
+
+    Pool sizing parameters are omitted for SQLite, which uses a single-file
+    connection model incompatible with connection pool sizing.
     """
-    Create a SQLAlchemy engine.
-    """
-    kwargs: dict = {
-        "pool_pre_ping": True,
-        "pool_size": pool_size,
-        "max_overflow": max_overflow,
-    }
+    kwargs: dict = {"pool_pre_ping": True}
+    if not str(url).startswith("sqlite"):
+        kwargs["pool_size"] = pool_size
+        kwargs["max_overflow"] = max_overflow
     return create_engine(url, **kwargs)
 
 
