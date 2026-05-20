@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import typing
 import pandas as pd
 
 from hvac_fdd.config import Settings, get_settings
@@ -96,3 +97,31 @@ def _write_parquet(df: pd.DataFrame, output_dir: Path | str) -> None:
     out_path = out_dir / _OUTPUT_FILENAME
     df.to_parquet(out_path, index=False)
     logger.info("Saved processed features to %s", out_path)
+
+
+def iter_ingestion_pipeline(
+    settings: Settings | None = None,
+) -> typing.Iterator[pd.DataFrame]:
+    """
+    Chunked ingestion pipeline. Yields one fully processed DataFrame per input CSV.
+    Downcasts float64 to float32 to reduce memory footprint by 50%.
+    """
+    if settings is None:
+        settings = get_settings()
+
+    loader = LBNLDataLoader(settings.lbnl_data_dir)
+    for i, df in enumerate(loader.iter_files()):
+        try:
+            df = wide_zones_to_long(df)
+            df = fahrenheit_to_celsius(df, columns=TEMP_COLS_RAW)
+            df = normalize_column_names(df)
+            df = build_feature_set(df, settings)
+            
+            # Memory optimization: Downcast floats
+            float_cols = df.select_dtypes(include=["float64"]).columns
+            if len(float_cols) > 0:
+                df[float_cols] = df[float_cols].astype("float32")
+                
+            yield df
+        except Exception as exc:
+            logger.exception("Failed to process file chunk %d: %s", i, exc)
