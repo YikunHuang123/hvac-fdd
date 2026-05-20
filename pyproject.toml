@@ -18,6 +18,8 @@ dependencies = [
     "pyarrow>=15.0",
     "alembic>=1.13",
     "streamlit>=1.33",
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9",
 ]
 
 [project.optional-dependencies]
