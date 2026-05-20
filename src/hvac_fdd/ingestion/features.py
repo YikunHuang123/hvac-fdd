@@ -33,6 +33,27 @@ _LAG_COLS: list[str] = [
     "oa_damper_pct",
 ]
 
+# All engineered numeric features used for detection.
+# Centralizing this here decouples detection/base.py from hardcoded strings.
+ENG_FEATURE_COLUMNS: list[str] = [
+    "valve_tracking_err",
+    "damper_tracking_err",
+    "sf_tracking_err",
+    "sa_temp_error_c",
+    "ma_oa_delta_c",
+    "ra_sa_delta_c",
+    "valve_tracking_err_15_mean",
+    "valve_tracking_err_60_mean",
+    "damper_tracking_err_15_mean",
+    "damper_tracking_err_60_mean",
+    "sa_temp_error_c_15_mean",
+    "sa_temp_error_c_60_mean",
+    "sf_power_w_60_mean",
+    "temp_supply_celsius_lag1",
+    "chwc_valve_pct_lag1",
+    "oa_damper_pct_lag1",
+]
+
 # Minimum columns required before feature computation begins.
 _REQUIRED_INPUT_COLS: list[str] = [
     "event_time", "zone_id",

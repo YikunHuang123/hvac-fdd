@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     damper_tracking_threshold_pct:  float = 10.0  # Outside-air damper tracking error threshold (%)
     sustained_fault_minutes:        int   = 15    # Minutes a condition must persist before alerting
 
+    # Classifier thresholds
+    classifier_conf_critical: float = 0.80
+    classifier_conf_warning:  float = 0.50
+
     # API
     api_host:       str       = "0.0.0.0"
     api_port:       int       = 8000

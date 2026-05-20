@@ -28,10 +28,6 @@ _DETECTOR_SOURCE = "classifier"
 # Classifier output adds predicted_fault and confidence on top of PREDICT_OUTPUT_COLS.
 CLASSIFIER_OUTPUT_COLS: list[str] = PREDICT_OUTPUT_COLS + ["predicted_fault", "confidence"]
 
-# Confidence thresholds for alert-level assignment.
-_CONF_CRITICAL = 0.80
-_CONF_WARNING  = 0.50
-
 
 class FaultClassifier(DetectorBase):
     """
@@ -115,7 +111,11 @@ class FaultClassifier(DetectorBase):
         sub["predicted_fault"] = pred_labels[fault_mask]
         sub["confidence"]      = confidence[fault_mask]
         sub["violated_policy"] = sub["predicted_fault"]  # predicted fault IS the policy
-        sub["alert_level"]     = sub["confidence"].map(_map_alert_level)
+        sub["alert_level"]     = sub["confidence"].apply(
+            _map_alert_level,
+            critical=self._settings.classifier_conf_critical,
+            warning=self._settings.classifier_conf_warning,
+        )
         sub["anomaly_index"]   = sub["confidence"]       # higher confidence = stronger signal
         sub["trigger_signal"]  = "fault_classifier"
         sub["detector_source"] = _DETECTOR_SOURCE
@@ -160,10 +160,10 @@ class FaultClassifier(DetectorBase):
 # ── Module helpers ────────────────────────────────────────────────────────────
 
 
-def _map_alert_level(confidence: float) -> str:
-    if confidence >= _CONF_CRITICAL:
+def _map_alert_level(confidence: float, critical: float, warning: float) -> str:
+    if confidence >= critical:
         return AlertLevel.CRITICAL.value
-    if confidence >= _CONF_WARNING:
+    if confidence >= warning:
         return AlertLevel.WARNING.value
     return AlertLevel.INFO.value
 

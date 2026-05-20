@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _DETECTOR_SOURCE = "rules"
 
-
+# todo: 看笔记，目前的规则不符合专家定义。
 class LBNLRulesDetector(DetectorBase):
     """
     Rule-based detector mapped to the five LBNL fault scenarios.
