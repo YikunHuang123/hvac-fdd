@@ -17,6 +17,7 @@ from hvac_fdd.ui._shared import (
     PLOTLY_LAYOUT,
     badge_html,
     connection_banner,
+    get_api_url,
     inject_css,
     page_header,
     sec_title,
@@ -25,13 +26,9 @@ from hvac_fdd.ui.api_client import ALERT_PALETTE, FAULT_LABELS, FAULT_PALETTE, H
 
 inject_css()
 
-# ── Sidebar — API URL & filters ───────────────────────────────────────────────
+# ── Sidebar — filters ────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("### ⚙️ Connection")
-    api_url: str = st.text_input("API Base URL", value="http://localhost:8000", key="api_url_det")
-    st.divider()
-
     st.markdown("### 🔎 Filters")
 
     date_col1, date_col2 = st.columns(2)
@@ -62,6 +59,8 @@ with st.sidebar:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+api_url = get_api_url()
 
 
 @st.cache_resource

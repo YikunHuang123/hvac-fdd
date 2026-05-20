@@ -1,7 +1,7 @@
 """HVAC FDD Dashboard — Overview page (app entry point).
 
 Run with:
-    streamlit run src/hvac_fdd/ui/dashboard.py
+    streamlit run src/hvac_fdd/ui/Dashboard.py
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from hvac_fdd.ui._shared import (
     PLOTLY_LAYOUT,
     badge_html,
     connection_banner,
+    get_api_url,
     inject_css,
     kpi_card,
     page_header,
@@ -33,20 +34,14 @@ inject_css()
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("### ⚙️ Configuration")
-    api_url = st.text_input("API Base URL", value="http://localhost:8000", key="api_url")
     if st.button("↺  Refresh Data"):
         st.cache_data.clear()
         st.rerun()
-    st.divider()
-    st.markdown(
-        "<div style='font-size:0.7rem;color:#2A3A50;padding-top:4px'>"
-        "HVAC FDD v3.1 · Phase 7 UI</div>",
-        unsafe_allow_html=True,
-    )
 
 
 # ── Cached data fetchers ──────────────────────────────────────────────────────
+
+api_url = get_api_url()
 
 
 @st.cache_resource

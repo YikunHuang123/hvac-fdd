@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import streamlit as st
+from hvac_fdd.config import get_settings
+
+def get_api_url() -> str:
+    """Retrieve the API base URL from settings."""
+    settings = get_settings()
+    # If the host is 0.0.0.0 (bind all), use localhost for the UI connection.
+    host = "localhost" if settings.api_host == "0.0.0.0" else settings.api_host
+    return f"http://{host}:{settings.api_port}"
 
 # ── Plotly chart layout (applied to every chart) ──────────────────────────────
 
@@ -57,8 +65,109 @@ html, body, .stApp {
     background: #0C1220 !important;
     border-right: 1px solid #1A2540 !important;
 }
-[data-testid="stSidebar"] .stMarkdown h3 { color: #00D4B4 !important; }
-[data-testid="stSidebar"] label { color: #64748B !important; font-size: 0.78rem !important; }
+[data-testid="stSidebar"] .stMarkdown h3 { 
+    color: #00D4B4 !important; 
+    font-size: 1.3rem !important;
+    margin-bottom: 20px !important;
+}
+
+/* Sidebar Toggle Buttons (Collapse & Expand) */
+/* Target the buttons in both the sidebar and the main header */
+header[data-testid="stHeader"] button, 
+[data-testid="stSidebar"] button[kind="headerNoPadding"] {
+    background-color: transparent !important;
+    color: #00D4B4 !important;
+}
+
+header[data-testid="stHeader"] button svg, 
+[data-testid="stSidebar"] button[kind="headerNoPadding"] svg {
+    fill: #00D4B4 !important;
+    width: 28px !important;
+    height: 28px !important;
+}
+
+/* Ensure the header doesn't block clicks but is transparent */
+header[data-testid="stHeader"] {
+    background-color: rgba(0,0,0,0) !important;
+    color: #00D4B4 !important;
+}
+
+/* Sidebar Navigation Links (Page Names) */
+[data-testid="stSidebarNav"] ul li a span {
+    color: #E2E8F0 !important;
+    font-weight: 500 !important;
+    font-size: 1.05rem !important; /* Larger text for nav */
+}
+
+/* Inject icons for all sidebar navigation items */
+[data-testid="stSidebarNav"] ul li:nth-child(1) a span::before { content: "🌡️ "; margin-right: 8px; }
+[data-testid="stSidebarNav"] ul li:nth-child(2) a span::before { content: "🔍 "; margin-right: 8px; }
+[data-testid="stSidebarNav"] ul li:nth-child(3) a span::before { content: "📈 "; margin-right: 8px; }
+[data-testid="stSidebarNav"] ul li:nth-child(4) a span::before { content: "⚙️ "; margin-right: 8px; }
+[data-testid="stSidebarNav"] ul li:nth-child(5) a span::before { content: "📋 "; margin-right: 8px; }
+
+/* Active Page Link */
+[data-testid="stSidebarNav"] ul li [aria-current="page"] {
+    background-color: rgba(0, 212, 180, 0.12) !important;
+    border-radius: 10px !important;
+    padding: 8px 12px !important;
+}
+[data-testid="stSidebarNav"] ul li [aria-current="page"] span {
+    color: #00D4B4 !important;
+    font-weight: 700 !important;
+}
+
+/* Hover Effect for Links */
+[data-testid="stSidebarNav"] ul li a:hover {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    border-radius: 10px !important;
+}
+
+/* Sidebar Labels and functional elements sizing */
+[data-testid="stSidebar"] label { 
+    color: #E2E8F0 !important; 
+    font-size: 0.95rem !important; /* Larger labels */
+    font-weight: 600 !important;
+    margin-bottom: 8px !important;
+}
+
+/* Make Inputs and Selectboxes larger */
+[data-testid="stSidebar"] div[data-baseweb="input"] {
+    height: 48px !important;
+    border-radius: 10px !important;
+}
+[data-testid="stSidebar"] div[data-baseweb="input"] input {
+    font-size: 1rem !important;
+}
+
+[data-testid="stSidebar"] div[data-baseweb="select"] > div {
+    height: 48px !important;
+    border-radius: 10px !important;
+    font-size: 1rem !important;
+    display: flex;
+    align-items: center;
+}
+
+/* Sidebar Buttons */
+[data-testid="stSidebar"] .stButton button {
+    width: 100% !important;
+    height: 52px !important;
+    font-size: 1.1rem !important;
+    border-radius: 10px !important;
+    margin-top: 15px !important;
+    letter-spacing: 0.5px !important;
+}
+
+[data-testid="stSidebar"] .stMarkdown p {
+    color: #94A3B8 !important;
+    font-size: 0.9rem !important;
+}
+/* Style for small metadata or help text in sidebar */
+.sidebar-note {
+    font-size: 0.75rem;
+    color: #64748B;
+    margin-top: 10px;
+}
 
 /* ── KPI Cards ───────────────────────────────────────────────────────────── */
 .kpi-grid { display: flex; gap: 16px; margin-bottom: 24px; }
@@ -209,7 +318,7 @@ hr { border-color: #1A2540 !important; margin: 16px 0 !important; }
 }
 
 /* ── Hide branding ───────────────────────────────────────────────────────── */
-#MainMenu, footer, header { visibility: hidden !important; }
+#MainMenu, footer { visibility: hidden !important; }
 </style>
 """
 

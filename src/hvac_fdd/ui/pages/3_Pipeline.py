@@ -17,6 +17,7 @@ import pandas as pd
 from hvac_fdd.ui._shared import (
     badge_html,
     connection_banner,
+    get_api_url,
     inject_css,
     page_header,
     sec_title,
@@ -25,14 +26,9 @@ from hvac_fdd.ui.api_client import SCENARIOS, HVACAPIClient
 
 inject_css()
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    st.markdown("### ⚙️ Connection")
-    api_url: str = st.text_input("API Base URL", value="http://localhost:8000", key="api_url_pipe")
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+api_url = get_api_url()
 
 
 @st.cache_resource

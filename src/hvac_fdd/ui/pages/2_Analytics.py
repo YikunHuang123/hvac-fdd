@@ -18,6 +18,7 @@ from plotly.subplots import make_subplots
 from hvac_fdd.ui._shared import (
     PLOTLY_LAYOUT,
     connection_banner,
+    get_api_url,
     inject_css,
     page_header,
     sec_title,
@@ -29,10 +30,6 @@ inject_css()
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("### ⚙️ Connection")
-    api_url: str = st.text_input("API Base URL", value="http://localhost:8000", key="api_url_ana")
-    st.divider()
-
     st.markdown("### 📊 Options")
     time_grain = st.selectbox("Time Granularity", ["Hourly", "Daily", "Weekly"], index=1)
     top_n_equip = st.slider("Top N Equipment", 3, 15, 8)
@@ -43,6 +40,8 @@ with st.sidebar:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+api_url = get_api_url()
 
 
 @st.cache_resource

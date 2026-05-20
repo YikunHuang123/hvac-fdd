@@ -19,6 +19,7 @@ from plotly.subplots import make_subplots
 from hvac_fdd.ui._shared import (
     PLOTLY_LAYOUT,
     connection_banner,
+    get_api_url,
     inject_css,
     kpi_card,
     page_header,
@@ -31,9 +32,6 @@ inject_css()
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("### ⚙️ Connection")
-    api_url: str = st.text_input("API Base URL", value="http://localhost:8000", key="api_url_eval")
-    st.divider()
     st.markdown(
         """
         <div style='font-size:0.78rem;color:#3D5070;line-height:1.6'>
@@ -51,6 +49,8 @@ with st.sidebar:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+api_url = get_api_url()
 
 
 @st.cache_resource
