@@ -122,7 +122,7 @@ Raw LBNL CSVs
 | **Config** | Pydantic v2 + pydantic-settings |
 | **Model Serialization** | joblib |
 | **Testing** | pytest, httpx |
-| **Package Manager** | uv |
+| **Package Manager** | Conda |
 
 ---
 
