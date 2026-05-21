@@ -67,16 +67,18 @@ class FaultClassifier(DetectorBase):
         y = self._encoder.fit_transform(y_raw)
 
         self._model = RandomForestClassifier(
-            n_estimators=s.if_n_estimators,  # reuse n_estimators config
+            n_estimators=s.clf_n_estimators,
             random_state=s.random_state,
             n_jobs=-1,
             class_weight="balanced",
         )
         self._model.fit(X, y)
         self._is_fitted = True
+        unique, counts = np.unique(y_raw, return_counts=True)
         logger.info(
-            "FaultClassifier fitted on %d rows (%d classes: %s)",
+            "FaultClassifier fitted on %d rows (%d classes: %s) | class distribution: %s",
             len(X), len(self._encoder.classes_), list(self._encoder.classes_),
+            dict(zip(unique, counts.tolist())),
         )
         return self
 

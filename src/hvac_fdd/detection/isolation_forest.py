@@ -25,8 +25,11 @@ logger = logging.getLogger(__name__)
 
 _DETECTOR_SOURCE = "isolation_forest"
 
-# Percentile offset above the 75th-percentile training threshold that triggers CRITICAL.
-_CRITICAL_OFFSET_PCT = 10.0
+# Percentile thresholds computed from the normal-only training score distribution.
+# Set high enough that the vast majority of normal data falls below WARNING,
+# avoiding the false-positive storm that results from a low percentile (e.g. 75th).
+_THRESHOLD_WARNING_PCT  = 95.0
+_THRESHOLD_CRITICAL_PCT = 99.0
 
 
 class IsolationForestDetector(DetectorBase):
@@ -76,8 +79,8 @@ class IsolationForestDetector(DetectorBase):
 
         # Thresholds from the NORMAL training score distribution.
         train_scores = -self._model.score_samples(X_scaled)  # higher = more anomalous
-        self._threshold_warning  = float(np.percentile(train_scores, 75.0))
-        self._threshold_critical = float(np.percentile(train_scores, 75.0 + _CRITICAL_OFFSET_PCT))
+        self._threshold_warning  = float(np.percentile(train_scores, _THRESHOLD_WARNING_PCT))
+        self._threshold_critical = float(np.percentile(train_scores, _THRESHOLD_CRITICAL_PCT))
 
         self._is_fitted = True
         logger.info(

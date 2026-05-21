@@ -21,9 +21,15 @@ class Settings(BaseSettings):
     models_dir:         Path = Path("models")
 
     # Isolation Forest parameters
-    if_contamination: float = Field(default=0.05, gt=0.0, le=0.5)
-    if_n_estimators:  int   = Field(default=100,  ge=10)
-    random_state:     int   = 42
+    if_contamination: float | str = Field(default="auto")
+    if_n_estimators:  int         = Field(default=100,  ge=10)
+    random_state:     int         = 42
+
+    # Classifier parameters
+    clf_n_estimators: int = Field(default=200, ge=10)
+
+    # Equipment
+    default_equipment_id: str = "AHU-1"
 
     # LBNL detection thresholds
     sa_temp_error_threshold_c:      float = 1.5   # SA_TEMP - SA_TEMPSPT alert threshold (°C)
