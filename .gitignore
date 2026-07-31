@@ -124,4 +124,7 @@ data/
 # Model
 models/
 
-.idea
+.idea/
+.agent/
+.claude/
+README_ZH.md

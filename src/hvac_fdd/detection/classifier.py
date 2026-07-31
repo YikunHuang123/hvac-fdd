@@ -13,7 +13,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.preprocessing import LabelEncoder
 
 from hvac_fdd.config import Settings, get_settings
@@ -42,7 +42,7 @@ class FaultClassifier(DetectorBase):
     def __init__(self, settings: Settings | None = None) -> None:
         super().__init__()
         self._settings      = settings or get_settings()
-        self._model:   RandomForestClassifier | None = None
+        self._model:   XGBClassifier | None = None
         self._encoder: LabelEncoder | None = None
 
     # ── DetectorBase interface ────────────────────────────────────────────────
@@ -66,11 +66,12 @@ class FaultClassifier(DetectorBase):
         self._encoder = LabelEncoder()
         y = self._encoder.fit_transform(y_raw)
 
-        self._model = RandomForestClassifier(
+        self._model = XGBClassifier(
             n_estimators=s.clf_n_estimators,
             random_state=s.random_state,
             n_jobs=-1,
-            class_weight="balanced",
+            tree_method="hist",
+            device="cuda",
         )
         self._model.fit(X, y)
         self._is_fitted = True

@@ -2,7 +2,7 @@
 """
 HVAC FDD Pipeline Integration Script (Stable Edition).
 
-🚀 Usage Guide:
+Usage Guide:
 --------------------------------------------------
 A. Training Mode:
    1. Train Isolation Forest only (using 100% Normal Jan-Sept data):
@@ -125,9 +125,13 @@ def main() -> None:
             if_train_frames.append(train_chunk[train_chunk["fault_type"] == FaultType.NORMAL.value])
 
         if args.train_clf and not train_chunk.empty:
-            # Vary random_state per chunk to avoid picking the same relative
-            # row positions across structurally similar scenario files.
-            clf_train_frames.append(train_chunk.sample(frac=0.2, random_state=42 + i))
+            # The classifier's job is diagnosis, not anomaly detection.
+            # Train only on fault data to prevent it from vetoing the anomaly detectors.
+            fault_only = train_chunk[train_chunk["fault_type"] != FaultType.NORMAL.value]
+            if not fault_only.empty:
+                # Vary random_state per chunk to avoid picking the same relative
+                # row positions across structurally similar scenario files.
+                clf_train_frames.append(fault_only.sample(frac=0.2, random_state=42 + i))
 
         if not eval_chunk.empty and (uses_detector or args.evaluate):
             eval_frames.append(eval_chunk)
