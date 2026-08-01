@@ -13,6 +13,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.preprocessing import LabelEncoder
 
@@ -42,7 +43,7 @@ class FaultClassifier(DetectorBase):
     def __init__(self, settings: Settings | None = None) -> None:
         super().__init__()
         self._settings      = settings or get_settings()
-        self._model:   XGBClassifier | None = None
+        self._model:   RandomForestClassifier | XGBClassifier | None = None
         self._encoder: LabelEncoder | None = None
 
     # ── DetectorBase interface ────────────────────────────────────────────────
@@ -58,7 +59,6 @@ class FaultClassifier(DetectorBase):
         Returns:
             self (for chaining).
         """
-        s = self._settings
         clean = df[NUMERIC_FEATURES + ["fault_type"]].dropna()
         X = clean[NUMERIC_FEATURES].values
         y_raw = clean["fault_type"].values
@@ -66,14 +66,41 @@ class FaultClassifier(DetectorBase):
         self._encoder = LabelEncoder()
         y = self._encoder.fit_transform(y_raw)
 
-        self._model = XGBClassifier(
-            n_estimators=s.clf_n_estimators,
-            random_state=s.random_state,
-            n_jobs=-1,
-            tree_method="hist",
-            device="cuda",
-        )
-        self._model.fit(X, y)
+        model_type = self._settings.supervised_model.lower()
+        if model_type == "random_forest":
+            from sklearn.ensemble import RandomForestClassifier
+            self._model = RandomForestClassifier(
+                n_estimators=self._settings.clf_n_estimators,
+                random_state=self._settings.random_state,
+                n_jobs=-1,
+                verbose=1
+            )
+        elif model_type == "xgboost":
+            from xgboost import XGBClassifier
+            self._model = XGBClassifier(
+                n_estimators=self._settings.clf_n_estimators,
+                random_state=self._settings.random_state,
+                n_jobs=-1,
+                tree_method="hist",
+                verbosity=1
+            )
+        elif model_type == "gnn":
+            from hvac_fdd.detection.gnn_classifier import GNNClassifierWrapper
+            self._model = GNNClassifierWrapper(self._settings)
+        elif model_type == "tcn":
+            from hvac_fdd.detection.tcn_classifier import TCNClassifierWrapper
+            self._model = TCNClassifierWrapper(self._settings)
+        elif model_type == "hierarchical_xgb":
+            from hvac_fdd.detection.hierarchical_classifier import HierarchicalXGBWrapper
+            self._model = HierarchicalXGBWrapper(self._settings)
+        else:
+            raise ValueError(f"Unknown supervised model type: {model_type}")
+            
+        if model_type == "hierarchical_xgb":
+            self._model.fit(X, y, classes=self._encoder.classes_)
+        else:
+            self._model.fit(X, y)
+            
         self._is_fitted = True
         unique, counts = np.unique(y_raw, return_counts=True)
         logger.info(

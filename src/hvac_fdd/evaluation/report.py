@@ -142,8 +142,8 @@ def _build_markdown(metrics: dict) -> str:
         lines += [
             "## Per-Class Classification Metrics",
             "",
-            "| Class | Precision | Recall | F1 | AUC | Support |",
-            "|:------|----------:|-------:|---:|----:|--------:|",
+            "| Class | Precision | Recall | F1 | Support |",
+            "|:------|----------:|-------:|---:|--------:|",
         ]
         for cls_name, vals in metrics["per_class"].items():
             lines.append(
@@ -151,7 +151,6 @@ def _build_markdown(metrics: dict) -> str:
                 f"| {_fmt(vals.get('precision'))} "
                 f"| {_fmt(vals.get('recall'))} "
                 f"| {_fmt(vals.get('f1'))} "
-                f"| {_fmt(vals.get('auc'))} "
                 f"| {vals.get('support', 'N/A')} |"
             )
         lines.append("")

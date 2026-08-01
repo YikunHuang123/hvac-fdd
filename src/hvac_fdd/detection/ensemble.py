@@ -3,7 +3,7 @@ Ensemble detector that fuses rules, Isolation Forest, and (optionally) a classif
 
 Fusion strategy:
   1. Rules detector  — low latency, high explainability
-  2. IsolationForest — catches anomalies not covered by rules
+  2. GMM — catches anomalies not covered by rules
   3. Classifier      — annotates each detected event with a predicted FaultType
 
 Deduplication: per (event_time, zone_id), keep the row with the highest anomaly_index.
@@ -17,9 +17,7 @@ from typing import Optional
 import pandas as pd
 
 from hvac_fdd.detection.classifier import FaultClassifier
-from hvac_fdd.detection.isolation_forest import IsolationForestDetector
-from hvac_fdd.detection.rules import LBNLRulesDetector
-from hvac_fdd.domain import AlertLevel, DetectionEvent, FaultType
+from hvac_fdd.detection.base import DetectorBase
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +26,11 @@ _DEDUP_KEYS = ["event_time", "zone_id"]
 
 class EnsembleDetector:
     """
-    Combine rules, IsolationForest, and an optional FaultClassifier into one detector.
+    Combine rules, an unsupervised anomaly detector (GMM, IF, KAN), and an optional FaultClassifier into one detector.
 
     Args:
         rules:        Fitted LBNLRulesDetector.
-        iso_forest:   Fitted IsolationForestDetector.
+        unsupervised: Fitted unsupervised detector (e.g. GMMDetector, IsolationForestDetector, KANDetector).
         classifier:   Optional fitted FaultClassifier; skipped when None.
         equipment_id: Equipment identifier written to every DetectionEvent.
     """
@@ -40,14 +38,14 @@ class EnsembleDetector:
     def __init__(
         self,
         rules: LBNLRulesDetector,
-        iso_forest: IsolationForestDetector,
+        unsupervised: DetectorBase,
         classifier: Optional[FaultClassifier] = None,
         *,
         equipment_id: str = "AHU-1",
     ) -> None:
-        self._rules       = rules
-        self._iso_forest  = iso_forest
-        self._classifier  = classifier
+        self._rules        = rules
+        self._unsupervised = unsupervised
+        self._classifier   = classifier
         self._equipment_id = equipment_id
 
     # ── Public interface ──────────────────────────────────────────────────────
@@ -63,14 +61,24 @@ class EnsembleDetector:
             List of DetectionEvent domain objects, one per unique (event_time, zone_id).
         """
         rules_hits = self._rules.predict(df)
-        if_hits    = self._iso_forest.predict(df)
-        combined   = self._merge_and_dedup(rules_hits, if_hits)
+        unsup_hits = self._unsupervised.predict(df)
+        combined   = self._merge_and_dedup(rules_hits, unsup_hits)
 
         if combined.empty:
             return []
 
         if self._classifier is not None:
             combined = self._annotate_with_classifier(combined, df)
+
+        if "fault_type" in df.columns:
+            labels = df[["event_time", "zone_id", "fault_type"]].drop_duplicates(
+                subset=["event_time", "zone_id"]
+            )
+            combined = combined.drop(columns=["ground_truth"], errors="ignore").merge(
+                labels,
+                on=["event_time", "zone_id"],
+                how="left",
+            ).rename(columns={"fault_type": "ground_truth"})
 
         events = [self._to_domain(row) for _, row in combined.iterrows()]
         logger.info("EnsembleDetector: %d events from %d input rows", len(events), len(df))
@@ -81,14 +89,14 @@ class EnsembleDetector:
     @staticmethod
     def _merge_and_dedup(
         rules_hits: pd.DataFrame,
-        if_hits: pd.DataFrame,
+        unsup_hits: pd.DataFrame,
     ) -> pd.DataFrame:
         """
-        Concatenate rules and IF hits; keep the highest anomaly_index row per
+        Concatenate rules and unsupervised hits; keep the highest anomaly_index row per
         (event_time, zone_id) pair. Initialise predicted_fault and confidence
         columns to None so downstream code can fill them.
         """
-        frames = [f for f in (rules_hits, if_hits) if len(f) > 0]
+        frames = [f for f in (rules_hits, unsup_hits) if len(f) > 0]
         if not frames:
             combined = pd.DataFrame()
         else:

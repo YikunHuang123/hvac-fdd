@@ -320,7 +320,7 @@ class TestBuildFeatureSet:
         assert "sf_power_w_60_std"  in feature_df.columns
 
     def test_lag_columns_created(self, feature_df):
-        for col in ["temp_supply_celsius", "chwc_valve_pct", "oa_damper_pct"]:
+        for col in ["sa_oa_temp_diff_c", "chwc_valve_pct", "oa_damper_pct"]:
             assert f"{col}_lag1" in feature_df.columns
 
     # ── Arithmetic correctness ────────────────────────────────────────────────

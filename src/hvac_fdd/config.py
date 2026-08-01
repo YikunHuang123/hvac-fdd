@@ -20,12 +20,36 @@ class Settings(BaseSettings):
     processed_data_dir: Path = Path("data/processed")
     models_dir:         Path = Path("models")
 
+    # Model selection
+    unsupervised_model: str = Field(default="gmm")  # options: 'if', 'gmm', 'kan'
+
+    # GMM parameters
+    gmm_n_components:    int = Field(default=5, ge=1)
+    gmm_covariance_type: str = Field(default="full")
+
     # Isolation Forest parameters
-    if_contamination: float | str = Field(default="auto")
-    if_n_estimators:  int         = Field(default=100,  ge=10)
-    random_state:     int         = 42
+    if_contamination:    float = Field(default=0.05, ge=0.0, le=0.5)
+    if_n_estimators:     int   = Field(default=100, ge=1)
+
+    # GNN parameters
+    gnn_hidden_dim:      int = Field(default=32, ge=8)
+    gnn_epochs:          int = Field(default=5, ge=1)
+    gnn_batch_size:      int = Field(default=8192, ge=64)
+    gnn_learning_rate:   float = Field(default=0.001, gt=0)
+
+    # TCN parameters
+    tcn_seq_len:         int = Field(default=30, ge=1)
+    tcn_hidden_dim:      int = Field(default=32, ge=8)
+    tcn_kernel_size:     int = Field(default=3, ge=2)
+    tcn_levels:          int = Field(default=3, ge=1)
+    tcn_epochs:          int = Field(default=5, ge=1)
+    tcn_batch_size:      int = Field(default=2048, ge=64)
+    tcn_learning_rate:   float = Field(default=0.001, gt=0)
+
+    random_state:        int = 42
 
     # Classifier parameters
+    supervised_model: str = Field(default="xgboost")  # options: 'random_forest', 'xgboost', 'tcn', 'hierarchical_xgb'
     clf_n_estimators: int = Field(default=200, ge=10)
 
     # Equipment

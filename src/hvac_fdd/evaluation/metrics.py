@@ -3,7 +3,7 @@ Fault detection and classification evaluation metrics.
 
 Three public functions:
   detection_report            — binary detection quality (P/R/F1 overall + per fault type)
-  classification_report_extended — full multi-class P/R/F1 + confusion matrix + AUC
+  classification_report_extended — full multi-class P/R/F1 + confusion matrix
   time_to_detect              — mean detection delay per fault type (minutes)
 
 All functions skip rows where ground-truth labels are None/NaN so they can
@@ -21,7 +21,6 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     precision_recall_fscore_support,
-    roc_auc_score,
 )
 
 from hvac_fdd.domain import FaultType
@@ -97,13 +96,15 @@ def detection_report(
     for ft in fault_types:
         ft_val   = ft.value
         y_true_x = (valid["fault_type"] == ft_val).astype(int)
-        p_x, r_x, f_x, _ = precision_recall_fscore_support(
-            y_true_x, y_pred, average="binary", zero_division=0
-        )
+        
+        # Calculate recall manually: True Positives / Actual Positives
+        # We don't report Precision/F1 here because the detector doesn't distinguish fault types.
+        actual_positives = y_true_x.sum()
+        true_positives = (y_true_x & y_pred).sum()
+        recall = float(true_positives / actual_positives) if actual_positives > 0 else 0.0
+        
         per_fault[ft_val] = {
-            "precision": _round(p_x),
-            "recall":    _round(r_x),
-            "f1":        _round(f_x),
+            "recall": _round(recall),
         }
 
     logger.info(
@@ -143,7 +144,6 @@ def classification_report_extended(
                     "recall":    float,
                     "f1":        float,
                     "support":   int,
-                    "auc":       float,   # binary OvR AUC; NaN when only one class in y_true
                 },
                 ...
             },
@@ -178,20 +178,11 @@ def classification_report_extended(
 
     per_class: dict[str, dict] = {}
     for i, label in enumerate(labels):
-        # Per-class binary AUC; equals balanced accuracy when only hard labels are available.
-        y_true_bin = (y_true == label).astype(int)
-        y_pred_bin = (y_pred == label).astype(int)
-        try:
-            auc = float(roc_auc_score(y_true_bin, y_pred_bin))
-        except ValueError:
-            auc = float("nan")  # triggered when y_true_bin has only one unique class
-
         per_class[label] = {
             "precision": _round(precision_arr[i]),
             "recall":    _round(recall_arr[i]),
             "f1":        _round(f1_arr[i]),
             "support":   int(support_arr[i]),
-            "auc":       _round(auc),
         }
 
     cm       = confusion_matrix(y_true, y_pred, labels=labels).tolist()

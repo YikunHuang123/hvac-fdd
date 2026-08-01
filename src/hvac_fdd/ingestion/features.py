@@ -20,6 +20,10 @@ _ROLLING_COLS: list[str] = [
     "sa_temp_error_c",
     "valve_tracking_err",
     "damper_tracking_err",
+    "ma_oa_delta_c",
+    "ra_sa_delta_c",
+    "chwc_valve_pct",
+    "oa_damper_pct",
 ]
 
 # AHU-level power signal (replicated across zones after wide_zones_to_long).
@@ -44,10 +48,25 @@ ENG_FEATURE_COLUMNS: list[str] = [
     "ra_sa_delta_c",
     "valve_tracking_err_15_mean",
     "valve_tracking_err_60_mean",
+    "valve_tracking_err_120_mean",
     "damper_tracking_err_15_mean",
     "damper_tracking_err_60_mean",
+    "damper_tracking_err_120_mean",
     "sa_temp_error_c_15_mean",
     "sa_temp_error_c_60_mean",
+    "sa_temp_error_c_120_mean",
+    "ma_oa_delta_c_15_mean",
+    "ma_oa_delta_c_60_mean",
+    "ma_oa_delta_c_120_mean",
+    "ra_sa_delta_c_15_mean",
+    "ra_sa_delta_c_60_mean",
+    "ra_sa_delta_c_120_mean",
+    "chwc_valve_pct_15_mean",
+    "chwc_valve_pct_60_mean",
+    "chwc_valve_pct_120_mean",
+    "oa_damper_pct_15_mean",
+    "oa_damper_pct_60_mean",
+    "oa_damper_pct_120_mean",
     "sf_power_w_60_mean",
     "sa_oa_temp_diff_c_lag1",
     "chwc_valve_pct_lag1",
@@ -86,8 +105,8 @@ def build_feature_set(df: pd.DataFrame, settings: Settings) -> pd.DataFrame:
          ma_oa_delta_c          = temp_mixed_celsius  - temp_outside_celsius
          ra_sa_delta_c          = temp_return_celsius - temp_supply_celsius
 
-    C. Rolling statistics (15-min and 60-min windows, per zone_id)
-         {col}_{15|60}_mean / std  for each col in _ROLLING_COLS
+    C. Rolling statistics (15-min, 60-min, and 120-min windows, per zone_id)
+         {col}_{15|60|120}_mean / std  for each col in _ROLLING_COLS
          sf_power_w_60_mean / std
 
     D. Lag features (1-step lag = 1 minute)
@@ -129,7 +148,7 @@ def build_feature_set(df: pd.DataFrame, settings: Settings) -> pd.DataFrame:
     # min_periods=1 prevents NaN at the start of each zone's history.
     # fillna(0.0) on std avoids NaN when a window has only one point.
     for col in _ROLLING_COLS:
-        for window, suffix in ((15, "15"), (60, "60")):
+        for window, suffix in ((15, "15"), (60, "60"), (120, "120")):
             grp = df.groupby("zone_id", sort=False)[col]
             df[f"{col}_{suffix}_mean"] = grp.transform(
                 lambda x, w=window: x.rolling(w, min_periods=1).mean()

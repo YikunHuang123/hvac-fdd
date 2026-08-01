@@ -5,7 +5,7 @@ Phase 4 evaluation tests.
 
 Coverage per REFACTORING_PLAN.md Phase 4:
   - detection_report: P/R/F1 correctness with known labels
-  - classification_report_extended: confusion matrix + per-class AUC
+  - classification_report_extended: confusion matrix + per-class metrics
   - time_to_detect: delay calculation
   - generate_report: JSON and Markdown output
   - ground_truth=None rows are skipped in all metric functions
@@ -16,7 +16,6 @@ The test_settings fixture (conftest.py) provides Settings with safe defaults.
 from __future__ import annotations
 
 import json
-import math
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -278,21 +277,11 @@ class TestClassificationReportExtended:
         total_support = sum(v["support"] for v in result["per_class"].values())
         assert total_support == result["n_evaluated"]
 
-    def test_auc_is_one_for_perfect_classifier(self):
-        y_true = pd.Series([_COI_STUCK, _NORMAL, _OA_BIAS])
-        y_pred = pd.Series([_COI_STUCK, _NORMAL, _OA_BIAS])
-        result = classification_report_extended(y_true, y_pred)
-        for cls_vals in result["per_class"].values():
-            assert abs(cls_vals["auc"] - 1.0) < 1e-6
-
-    def test_auc_is_nan_when_class_absent_from_true(self):
-        """If a label appears only in y_pred (not in y_true), AUC cannot be computed."""
+    def test_classification_report_excludes_auc(self):
         y_true = pd.Series([_NORMAL, _NORMAL])
-        y_pred = pd.Series([_NORMAL, _COI_STUCK])   # coi_stuck only in y_pred
+        y_pred = pd.Series([_NORMAL, _COI_STUCK])
         result = classification_report_extended(y_true, y_pred)
-        coi_auc = result["per_class"].get(_COI_STUCK, {}).get("auc", None)
-        if coi_auc is not None:
-            assert math.isnan(coi_auc), f"Expected NaN for absent class, got {coi_auc}"
+        assert all("auc" not in values for values in result["per_class"].values())
 
     def test_result_has_required_top_level_keys(self):
         y_true = pd.Series([_COI_STUCK, _NORMAL])
@@ -446,8 +435,8 @@ class TestGenerateReport:
         assert nested.with_suffix(".json").exists()
 
     def test_nan_float_serialised_in_json(self, tmp_path):
-        """NaN values (e.g. from AUC when class absent) must not crash JSON serialisation."""
-        metrics = {"auc": float("nan"), "n_evaluated": 10, "n_skipped": 0}
+        """NaN metric values must not crash JSON serialisation."""
+        metrics = {"metric": float("nan"), "n_evaluated": 10, "n_skipped": 0}
         base = tmp_path / "report"
         generate_report(metrics, base, formats=["json"])
         text = (tmp_path / "report.json").read_text(encoding="utf-8")

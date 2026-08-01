@@ -31,12 +31,12 @@
 | Feature | Description |
 |---|---|
 | 🔧 Rule-Based Detection | Five physics-based fault rules derived from ASHRAE Guideline 36 |
-| 🌲 Isolation Forest | Unsupervised anomaly detection trained on fault-free baseline data |
-| 🎯 Fault Classifier | Supervised RandomForest distinguishing six fault classes |
+| 🌲 Unsupervised Detection | Configurable engine (Isolation Forest / GMM / KAN) trained on normal data |
+| 🎯 Supervised Classifier | Multi-class fault classifier (Random Forest / XGBoost) |
 | 🔗 Modular Detectors | Each strategy is independent; combine freely at runtime via CLI flags |
 | ⚙️ Feature Engineering | 16 engineered features — tracking errors, temperature deltas, rolling statistics, lags |
 | 📦 Chunked Pipeline | Iterator-based processing prevents memory pressure on large datasets |
-| 📊 Evaluation Suite | Binary detection P/R/F1, multi-class confusion matrices, AUC, time-to-detect |
+| 📊 Evaluation Suite | Binary detection P/R/F1, multi-class confusion matrices, time-to-detect |
 | 🗄️ Persistence Layer | Detection events stored in PostgreSQL via Repository pattern |
 | 🌐 REST API | FastAPI backend with detection queries, pipeline triggers, and statistics |
 | 🖥️ Dashboard | Multi-page Streamlit UI for live monitoring, analytics, and evaluation |
@@ -64,8 +64,8 @@
 ┌──────────────────────────────────────────────────────────┐
 │                 Detection Engine                          │
 │  ┌───────────────┐  ┌──────────────────┐  ┌───────────┐ │
-│  │  Rules        │  │ IsolationForest  │  │ RandomForest│
-│  │  (ASHRAE G36) │  │ (unsupervised)   │  │ (6-class) │ │
+│  │  Rules        │  │ Unsupervised     │  │ Classifier│ │
+│  │  (ASHRAE G36) │  │ (IF/GMM/KAN)     │  │ (RF/XGB)  │ │
 │  └───────────────┘  └──────────────────┘  └───────────┘ │
 └──────────────────────┬───────────────────────────────────┘
                        │
@@ -98,7 +98,7 @@ Raw LBNL CSVs
      │
      ▼  Detect
      │   · Rules  →  policy violations (threshold-based)
-     │   · IF     →  anomaly score (trained on NORMAL rows)
+     │   · Unsup  →  anomaly score (trained on NORMAL rows, configurable via .env)
      │   · Clf    →  predicted fault + confidence
      │
      ▼  Persist
@@ -115,7 +115,7 @@ Raw LBNL CSVs
 | **Language** | Python 3.11+ |
 | **Web Framework** | FastAPI + Uvicorn |
 | **Dashboard** | Streamlit + Plotly |
-| **ML / Detection** | scikit-learn (IsolationForest, RandomForestClassifier) |
+| **ML / Deep Learning** | scikit-learn (IF, RF), XGBoost, PyTorch, pykan (KAN) |
 | **Data Processing** | Pandas, NumPy, PyArrow (Parquet) |
 | **Database** | PostgreSQL 16+ via SQLAlchemy 2.0 |
 | **Migrations** | Alembic |
@@ -146,11 +146,14 @@ The system targets six fault conditions found in the LBNL SDAHU dataset:
 **Rules Detector (`LBNLRulesDetector`)**  
 Five physics-based rules encoded from ASHRAE Guideline 36. Each rule checks a specific sensor condition (e.g., supply air temperature falls below setpoint while the coil valve is commanded closed, indicating coil leakage) and emits an `INFO`, `WARNING`, or `CRITICAL` event depending on the rule. No training required.
 
-**Isolation Forest (`IsolationForestDetector`)**  
-Trained exclusively on `NORMAL` rows. During inference, anomaly scores are mapped to alert levels via configurable thresholds. Effective for detecting novel or combined faults outside the training distribution.
+**Unsupervised Anomaly Detection (`IsolationForest`, `GMM`, `KAN`)**  
+Trained exclusively on `NORMAL` rows. The engine is fully configurable via `unsupervised_model` in the configuration. 
+- **Isolation Forest**: Great for general anomaly detection.
+- **GMM**: Highly accurate statistical model modeling long-tail distributions.
+- **KAN**: Cutting-edge Deep Learning Kolmogorov-Arnold Network autoencoder for nonlinear manifold learning.
 
 **Fault Classifier (`FaultClassifier`)**  
-A supervised RandomForest trained on all six classes. Returns the predicted fault type and a confidence score. Only non-NORMAL predictions generate a detection event.
+A supervised classifier (RandomForest or XGBoost) trained on all six classes. Returns the predicted fault type and a confidence score. Only non-NORMAL predictions generate a detection event.
 
 ### Evaluation
 
@@ -283,16 +286,16 @@ Process the raw LBNL CSVs into Parquet and store detection events:
 
 ```bash
 # Run all detectors
-python scripts/run_pipeline.py --use-rules --use-if --use-clf
+python scripts/run_pipeline.py --use-rules --use-unsup --use-clf
 
-# Train Isolation Forest, then run it
-python scripts/run_pipeline.py --train-if --use-if
+# Train Unsupervised model (configured in .env), then run it
+python scripts/run_pipeline.py --train-unsup --use-unsup
 
 # Train classifier, then run it
 python scripts/run_pipeline.py --train-clf --use-clf
 
 # Train both, run all detectors, persist to DB, and evaluate
-python scripts/run_pipeline.py --train-if --train-clf --use-rules --use-if --use-clf --persist --evaluate
+python scripts/run_pipeline.py --train-unsup --train-clf --use-rules --use-unsup --use-clf --persist --evaluate
 ```
 
 ### Start the API Server

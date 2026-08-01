@@ -126,5 +126,7 @@ models/
 
 .idea/
 .agent/
+.agents/
+AGENTS.md
 .claude/
 README_ZH.md
