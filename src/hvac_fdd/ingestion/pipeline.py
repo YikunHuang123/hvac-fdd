@@ -101,6 +101,8 @@ def _write_parquet(df: pd.DataFrame, output_dir: Path | str) -> None:
 
 def iter_ingestion_pipeline(
     settings: Settings | None = None,
+    *,
+    scenario: str | None = None,
 ) -> typing.Iterator[pd.DataFrame]:
     """
     Chunked ingestion pipeline. Yields one fully processed DataFrame per input CSV.
@@ -110,7 +112,7 @@ def iter_ingestion_pipeline(
         settings = get_settings()
 
     loader = LBNLDataLoader(settings.lbnl_data_dir)
-    for i, df in enumerate(loader.iter_files()):
+    for i, df in enumerate(loader.iter_files(scenario=scenario)):
         try:
             df = wide_zones_to_long(df)
             df = fahrenheit_to_celsius(df, columns=TEMP_COLS_RAW)

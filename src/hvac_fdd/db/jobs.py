@@ -34,6 +34,14 @@ class JobRepository:
         except Exception as exc:
             raise DatabaseError(f"create job failed: {exc}") from exc
 
+    def commit(self) -> None:
+        """Commit the current transaction before handing work to a background task."""
+        try:
+            self._session.commit()
+        except Exception as exc:
+            self._session.rollback()
+            raise DatabaseError(f"job transaction commit failed: {exc}") from exc
+
     def get_by_id(self, job_id: int) -> Optional[PipelineJobORM]:
         """Return the job with the given id, or None if not found."""
         return self._session.scalar(

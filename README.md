@@ -1,151 +1,169 @@
 # HVAC-FDD
 
-HVAC Fault Detection and Diagnostics (FDD) for the LBNL SDAHU (Single-Duct Air Handling Unit) dataset. The project combines ingestion, feature engineering, physics-based rules, unsupervised anomaly detection, supervised fault classification, evaluation, a REST API, and a Streamlit presentation layer.
+HVAC fault detection and diagnostics for the LBNL SDAHU single-duct air-handling-unit dataset.
 
-> This project is currently intended for offline experiments and end-to-end demonstrations, not as a production building-control system. Model metrics should come from command-line evaluation scripts and explicit split protocols. UI metrics are computed only from detection events stored in the database.
+> **Status:** Offline research and end-to-end demonstration. Report metrics with the model, split protocol, threshold policy, and normal-reference false-positive rate.
 
 ## Features
 
-- Load LBNL SDAHU CSV files and infer fault types from filenames.
-- Convert zone-wide data to long format, normalize units and column names, and create engineered features.
-- Run interpretable physics-based binary anomaly rules.
-- Run GMM or Isolation Forest unsupervised detectors; KAN, GNN, and TCN are experimental implementations, not current defaults.
-- Use XGBoost (with optional Random Forest, hierarchical XGBoost, or TCN) as an auxiliary fault-type classifier.
-- Persist detection events and pipeline-job status, then query them through FastAPI.
-- Use Streamlit to inspect events, statistics, job status, and stored evaluation results.
+- Loads LBNL SDAHU CSV files, infers fault labels from filenames, and engineers normalized features.
+- Detects anomalies with Rules plus optional GMM, Isolation Forest, or KAN detectors.
+- Adds optional fault-type predictions with XGBoost, Random Forest, Hierarchical XGBoost, or TCN.
+- Evaluates temporal splits and leave-one-severity-out generalization.
+- Persists detection events and pipeline-job status in PostgreSQL.
+- Exposes stored data through FastAPI and PostgreSQL analytical views for Power BI.
 
 ## Architecture
 
-    LBNL CSV
-      -> ingestion: load / transform / feature engineering
-      -> detection: rules + unsupervised detector + optional classifier
-      -> evaluation: temporal split / leave-one-severity-out
-      -> PostgreSQL (events and jobs) + command-line reports
-      -> FastAPI + Streamlit UI
+```text
+LBNL CSV
+   |
+   +--> Ingestion: load -> transform -> feature engineering
+   |
+   +--> Detection: Rules + (GMM / Isolation Forest / KAN)
+   |                 + optional classifier
+   |                   (XGBoost / Random Forest / Hierarchical XGBoost / TCN)
+   |
+   +--> Evaluation: temporal split / leave-one-severity-out
+   |
+   +--> PostgreSQL: detections and pipeline jobs
+          +--> FastAPI: programmatic data access
+          +--> analytics views: Power BI reporting
+```
 
-The recommended configuration is rules as the primary detector, GMM as an optional detector with a controlled normal-operation false-positive rate, and XGBoost as an auxiliary fault classifier. TCN, GNN, KAN, and Isolation Forest are comparison paths, not the current best model.
+The recommended configuration is **Rules + GMM + XGBoost**. GNN is retained only as a separate experimental implementation and is not part of the default CLI pipeline. TCN is available for comparison but showed weak leave-one-severity-out classification generalization.
 
-## Fault types
+| Layer | Available models | Role |
+|---|---|---|
+| Binary detector | Rules | Interpretable primary detector |
+| Unsupervised complement | GMM, Isolation Forest, KAN | Anomaly-score comparison |
+| Fault classifier | XGBoost, Random Forest, Hierarchical XGBoost, TCN | Optional fault-type prediction |
 
-| Identifier | Meaning |
-|---|---|
-| normal | Normal operation |
-| coi_bias | Coil-inlet temperature sensor bias |
-| coi_leakage | Chilled-water coil leakage |
-| coi_stuck | Coil valve stuck |
-| damper_stuck | Outdoor-air damper stuck |
-| oa_bias | Outdoor-air temperature sensor bias |
+## Data and evaluation
 
-The rules detector answers whether an anomaly exists and which rule was triggered; it is not itself a fault-type classifier. Detection and classification metrics must therefore be reported separately.
+The raw LBNL dataset is not included. Download it separately and set `LBNL_DATA_DIR` to `data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU`.
 
-## Data and evaluation splits
+Supported protocols:
 
-The raw LBNL data is not included. Download it separately and set LBNL_DATA_DIR. The default path is:
+1. Annual temporal split: January-September training, October-November validation, December hold-out test.
+2. Common temporal split: `--split-protocol common` when every scenario must appear in each period.
+3. Leave-one-severity-out: hold one severity CSV file out for testing while the remaining files are used for training.
 
-    data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU/
+Unsupervised models are trained on normal rows only. Binary detection metrics and fault-type classification metrics are reported separately.
 
-Unsupervised models must be trained on normal rows only. Supported protocols are:
+## Run locally
 
-1. Temporal split: configure training and evaluation windows with evaluation-window.
-2. Leave-one-severity-out: scripts/run_leave_one_severity.py holds one severity file out for testing while the remaining severities are used for training.
+Use a Python 3.11 environment and a PostgreSQL instance.
 
-Every metric should state the model, split protocol, threshold policy, and whether a normal reference set was included.
+```bash
+conda create -n hvac python=3.11 -y
+conda activate hvac
+pip install -e ".[dev]"
+cp .env.example .env
+```
 
-## Installation
+Set `DATABASE_URL=postgresql://hvac:hvac@localhost:5432/hvac_fdd` and point `LBNL_DATA_DIR` at the downloaded data. Initialize the schema:
 
-The project is primarily run in the WSL Ubuntu Conda environment named hvac:
+```bash
+alembic upgrade head
+```
 
-    conda create -n hvac python=3.11 -y
-    conda activate hvac
-    pip install -e ".[dev]"
-    cp .env.example .env
+Select and train models:
 
-Default PostgreSQL configuration:
+```bash
+export UNSUPERVISED_MODEL=gmm       # gmm, if, or kan
+export SUPERVISED_MODEL=xgboost     # xgboost, random_forest, hierarchical_xgb, or tcn
+python scripts/preprocess_data.py
+python scripts/run_pipeline.py --train-unsup --train-clf
+```
 
-    DATABASE_URL=postgresql://hvac:hvac@localhost:5432/hvac_fdd
-    LBNL_DATA_DIR=data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU
-    PROCESSED_DATA_DIR=data/processed
-    MODELS_DIR=models
-    API_HOST=0.0.0.0
-    API_PORT=8000
-    DASHBOARD_PORT=8501
+Run detection and persist events:
 
-After creating the database, run alembic upgrade head. Unit tests use test settings and SQLite fixtures; that does not configure production PostgreSQL.
+```bash
+python scripts/run_pipeline.py --use-rules --use-unsup --use-clf --persist
+```
 
-## Usage
+Then start the API:
 
-### Preprocess data
+```bash
+uvicorn hvac_fdd.api:create_app --factory --host 0.0.0.0 --port 8000
+```
 
-    python scripts/preprocess_data.py
+API documentation is available at <http://localhost:8000/docs>. The API reads and writes PostgreSQL data; it does not replace the offline training/evaluation CLI.
 
-### Train and run detectors
+## Run with Docker Compose
 
-    python scripts/run_pipeline.py --train-unsup --train-clf
-    python scripts/run_pipeline.py --use-rules --use-unsup --use-clf --persist
-    python scripts/run_pipeline.py --use-rules --use-unsup --use-clf --evaluate
-    python scripts/run_pipeline.py --help
+Docker Compose starts PostgreSQL and FastAPI. It does not run training or detection automatically.
 
-Example leave-one-severity-out experiment:
+```bash
+docker compose up --build -d
+docker compose ps
+curl http://localhost:8000/health/live
+```
 
-    python scripts/run_leave_one_severity.py --model rules_gmm --output-dir artifacts/holdout_severity/rules_gmm
+The API is at <http://localhost:8000>; PostgreSQL is available at `localhost:5432` (`hvac` / `hvac_fdd`). Keep the database container running, then execute the training and detection CLI from a Python environment configured with the same database URL. Apply Power BI views with:
 
-### Start the API
+```bash
+psql postgresql://hvac:hvac@localhost:5432/hvac_fdd -f powerbi/sql/analytics_views.sql
+```
 
-    uvicorn hvac_fdd.api:create_app --factory --host 0.0.0.0 --port 8000
+Stop services with `docker compose down`. Use `docker compose down -v` only when the PostgreSQL volume should also be deleted.
 
-Main endpoints:
+## API reference
 
-- GET /health/live and GET /health/ready
-- GET /api/v1/detections/ (filtering and pagination)
-- GET /stats/ and GET /stats/by-fault-type
-- POST /pipeline/run
-- GET /pipeline/jobs/{job_id}
-- /docs
+- `GET /health/live` and `GET /health/ready`
+- `GET /api/v1/detections/`
+- `GET /stats/` and `GET /stats/by-fault-type`
+- `POST /pipeline/run`
+- `GET /pipeline/jobs/{job_id}`
+- `/docs`
 
-### Start the Streamlit UI
+## Power BI analytical layer
 
-    streamlit run src/hvac_fdd/ui/Dashboard.py --server.port 8501
+Power BI is the primary reporting and analysis interface. Connect Power BI Desktop to PostgreSQL and use the `analytics` schema; reports read database views rather than raw CSV files or application UI state.
 
-Start the API before opening the UI:
+The SQL file creates:
 
-| Page | Purpose |
-|---|---|
-| Dashboard | Detection counts, alert levels, fault distribution, and recent events |
-| Detections | Filter events by time, zone, alert level, and fault type |
-| Analytics | Trend and distribution analysis of stored events |
-| Pipeline | Trigger an asynchronous job and inspect its status |
-| Evaluation | Auxiliary plots for database events with ground_truth |
+- `analytics.vw_detection_events` - event-level detection details;
+- `analytics.vw_detection_daily` - daily detection aggregates;
+- `analytics.vw_pipeline_runs` - pipeline status, duration, and processing counts.
 
-The UI is a presentation and operation layer, not a replacement for strict evaluation scripts. Without complete experiment output in the database, UI metrics must not be treated as final model conclusions.
+## Recorded offline comparison
 
-### Tests
+This benchmark uses January-November training and a December hold-out test. It is not a live database metric.
 
-    pytest -v
+| Configuration | Recall | Precision | F1 | Role |
+|---|---:|---:|---:|---|
+| Rules baseline | 66.92% | 97.97% | 0.795 | Interpretable baseline |
+| Rules + Isolation Forest | 74.13% | 96.67% | 0.839 | Comparison |
+| Rules + GMM | 77.94% | 96.81% | 0.864 | Recommended ensemble |
+| Rules + GMM, calibrated threshold | 79.32% | 96.73% | 0.872 | Threshold trade-off |
+
+`coi_stuck` and `damper_stuck` were strongest; `oa_bias` and `coi_bias` remained harder because control-loop compensation can mask part of the bias. Detection success does not prove exact fault-type identification; those are separate claims.
 
 ## Project layout
 
-    src/hvac_fdd/ingestion/       loading, transforms, and feature engineering
-    src/hvac_fdd/detection/       rules, GMM, Isolation Forest, classifiers, and experiments
-    src/hvac_fdd/evaluation/      metrics and reports
-    src/hvac_fdd/db/              SQLAlchemy ORM and repositories
-    src/hvac_fdd/api/              FastAPI routes and schemas
-    src/hvac_fdd/ui/               Streamlit pages and API client
-    scripts/                       preprocessing, main pipeline, leave-one-severity-out
-    tests/                         unit and API tests
-    migrations/                    Alembic migrations
-    data/                          raw data and Parquet (normally not committed)
-    models/                        trained artifacts (commit selectively)
-    artifacts/                     experiment outputs (normally not committed)
+```text
+src/hvac_fdd/ingestion/   loading, transforms, and feature engineering
+src/hvac_fdd/detection/   rules, GMM, Isolation Forest, and classifiers
+src/hvac_fdd/evaluation/  metrics and reports
+src/hvac_fdd/db/          SQLAlchemy ORM and repositories
+src/hvac_fdd/api/         FastAPI routes and schemas
+powerbi/                  PostgreSQL analytical views and connection notes
+scripts/                  preprocessing, pipeline, and evaluation runners
+tests/                    unit and API tests
+migrations/               Alembic migrations
+data/                     raw data and processed files (normally not committed)
+models/                   trained artifacts (commit selectively)
+artifacts/                experiment outputs (normally not committed)
+```
 
-## Current project conclusions
+## Tests
 
-- Rules are currently the most stable and interpretable primary detector.
-- GMM is a complementary detector, but its threshold and normal-reference FPR must be reported.
-- XGBoost is suitable as an auxiliary fault-type classifier; its output does not prove that the binary detector identified the specific fault.
-- TCN has insufficient classification generalization in leave-one-severity-out experiments and is retained only for research comparison.
-- GNN, KAN, and Isolation Forest are optional or experimental paths, not defaults.
+```bash
+pytest -v
+```
 
 ## License
 
-This project is released under the MIT License. Use of the LBNL dataset is subject to the publisher's license and citation requirements.
-
+MIT. Use of the LBNL dataset is subject to the publisher's license and citation requirements.

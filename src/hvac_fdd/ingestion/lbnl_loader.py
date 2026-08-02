@@ -104,15 +104,23 @@ class LBNLDataLoader(DataLoaderBase):
         )
         return df
 
-    def iter_files(self, chunksize: int | None = None) -> typing.Iterator[pd.DataFrame]:
+    def iter_files(
+        self,
+        chunksize: int | None = None,
+        scenario: str | None = None,
+    ) -> typing.Iterator[pd.DataFrame]:
         """
         Yield one DataFrame per CSV file.
         Memory-efficient alternative to load_all().
         Loading 10818901 data at one time is too much memory overhead
         """
         csv_paths = sorted(self._data_dir.glob("*.csv"))
+        if scenario and scenario != "all":
+            key = scenario.lower()
+            csv_paths = [path for path in csv_paths if key in path.stem.lower()]
         if not csv_paths:
-            raise DataLoadError(f"No CSV files found in {self._data_dir}")
+            detail = f" for scenario={scenario!r}" if scenario else ""
+            raise DataLoadError(f"No CSV files found in {self._data_dir}{detail}")
 
         for path in csv_paths:
             fault_type = self._infer_fault_type(path.stem)

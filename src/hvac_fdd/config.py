@@ -68,7 +68,6 @@ class Settings(BaseSettings):
     # API
     api_host:       str       = "0.0.0.0"
     api_port:       int       = 8000
-    dashboard_port: int       = 8501
     cors_origins:   list[str] = ["*"]
     log_level:      str       = "INFO"
 

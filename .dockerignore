@@ -1,0 +1,10 @@
+.git
+.gitignore
+.venv
+.npm-cache
+__pycache__
+*.pyc
+artifacts
+*.log
+tests
+docs
