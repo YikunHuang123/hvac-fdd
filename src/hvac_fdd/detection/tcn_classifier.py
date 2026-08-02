@@ -110,6 +110,36 @@ class SlidingWindowDataset(torch.utils.data.Dataset):
         return x_window, torch.tensor(-1)
 
 
+class SegmentedSlidingWindowDataset(torch.utils.data.Dataset):
+    """Sliding windows built independently within each continuous scenario."""
+
+    def __init__(self, segments: list[tuple[np.ndarray, np.ndarray]], seq_len: int):
+        self._segments = [
+            (
+                torch.tensor(X, dtype=torch.float32),
+                torch.tensor(y, dtype=torch.long) if y is not None else None,
+            )
+            for X, y in segments
+            if len(X) >= seq_len
+        ]
+        self._seq_len = seq_len
+        self._offsets = np.cumsum(
+            [len(X) - seq_len + 1 for X, _ in self._segments], dtype=np.int64
+        )
+
+    def __len__(self) -> int:
+        return int(self._offsets[-1]) if len(self._offsets) else 0
+
+    def __getitem__(self, idx: int):
+        segment_idx = int(np.searchsorted(self._offsets, idx, side="right"))
+        previous = 0 if segment_idx == 0 else int(self._offsets[segment_idx - 1])
+        local_idx = idx - previous
+        X, y = self._segments[segment_idx]
+        window = X[local_idx : local_idx + self._seq_len].transpose(0, 1)
+        label = y[local_idx + self._seq_len - 1] if y is not None else -1
+        return window, label
+
+
 class TCNClassifierWrapper:
     """
     Scikit-learn style wrapper for TCNModel to act as a backend for FaultClassifier.
@@ -122,7 +152,12 @@ class TCNClassifierWrapper:
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.classes_ = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "TCNClassifierWrapper":
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        groups: np.ndarray | None = None,
+    ) -> "TCNClassifierWrapper":
         # X is already filtered to NUMERIC_FEATURES and no NaN
         X_np = self._scaler.fit_transform(X)
         self.classes_ = np.unique(y)
@@ -131,7 +166,16 @@ class TCNClassifierWrapper:
         num_classes = len(self.classes_)
         
         logger.info(f"Initializing SlidingWindowDataset (seq_len={self._settings.tcn_seq_len}) from {len(X_np)} rows...")
-        dataset = SlidingWindowDataset(X_np, y, self._settings.tcn_seq_len)
+        if groups is None:
+            segments = [(X_np, y)]
+        else:
+            segments = [
+                (X_np[groups == group], y[groups == group])
+                for group in pd.unique(groups)
+            ]
+        dataset = SegmentedSlidingWindowDataset(segments, self._settings.tcn_seq_len)
+        if len(dataset) == 0:
+            raise ValueError("TCN training data contains no complete sequence window")
         
         loader = DataLoader(
             dataset, 
@@ -150,7 +194,11 @@ class TCNClassifierWrapper:
         ).to(self._device)
         
         optimizer = torch.optim.Adam(self._model.parameters(), lr=self._settings.tcn_learning_rate)
-        criterion = nn.CrossEntropyLoss()
+        class_counts = np.bincount(y.astype(np.int64), minlength=num_classes)
+        class_weights = len(y) / (num_classes * np.maximum(class_counts, 1))
+        criterion = nn.CrossEntropyLoss(
+            weight=torch.tensor(class_weights, dtype=torch.float32, device=self._device)
+        )
         
         epochs = self._settings.tcn_epochs
         logger.info(f"Training TCN Classifier on {self._device} with {len(dataset)} windows (classes={num_classes})")

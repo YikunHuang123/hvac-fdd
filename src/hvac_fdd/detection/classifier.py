@@ -45,6 +45,7 @@ class FaultClassifier(DetectorBase):
         self._settings      = settings or get_settings()
         self._model:   RandomForestClassifier | XGBClassifier | None = None
         self._encoder: LabelEncoder | None = None
+        self._anomaly_threshold: float = 0.5
 
     # ── DetectorBase interface ────────────────────────────────────────────────
 
@@ -59,9 +60,13 @@ class FaultClassifier(DetectorBase):
         Returns:
             self (for chaining).
         """
-        clean = df[NUMERIC_FEATURES + ["fault_type"]].dropna()
+        columns = NUMERIC_FEATURES + ["fault_type"]
+        if "scenario_file" in df.columns:
+            columns.append("scenario_file")
+        clean = df[columns].dropna()
         X = clean[NUMERIC_FEATURES].values
         y_raw = clean["fault_type"].values
+        groups = clean["scenario_file"].values if "scenario_file" in clean.columns else None
 
         self._encoder = LabelEncoder()
         y = self._encoder.fit_transform(y_raw)
@@ -98,6 +103,8 @@ class FaultClassifier(DetectorBase):
             
         if model_type == "hierarchical_xgb":
             self._model.fit(X, y, classes=self._encoder.classes_)
+        elif model_type == "tcn":
+            self._model.fit(X, y, groups=groups)
         else:
             self._model.fit(X, y)
             
@@ -107,6 +114,30 @@ class FaultClassifier(DetectorBase):
             "FaultClassifier fitted on %d rows (%d classes: %s) | class distribution: %s",
             len(X), len(self._encoder.classes_), list(self._encoder.classes_),
             dict(zip(unique, counts.tolist())),
+        )
+        return self
+
+    def calibrate_anomaly_threshold(
+        self,
+        df: pd.DataFrame,
+        target_fpr: float,
+    ) -> "FaultClassifier":
+        """Set the anomaly threshold from validation normal-operation rows."""
+        self._require_fitted()
+        if not 0.0 < target_fpr < 1.0:
+            raise ValueError("target_fpr must be between 0 and 1")
+        normal_df = df[df["fault_type"] == FaultType.NORMAL.value]
+        normal_df = normal_df[NUMERIC_FEATURES].dropna()
+        if normal_df.empty:
+            raise ValueError("Validation data contains no complete normal rows")
+        probabilities = self._model.predict_proba(normal_df[NUMERIC_FEATURES].values)  # type: ignore[union-attr]
+        normal_idx = int(np.flatnonzero(self._encoder.classes_ == FaultType.NORMAL.value)[0])  # type: ignore[union-attr]
+        anomaly_scores = 1.0 - probabilities[:, normal_idx]
+        self._anomaly_threshold = float(np.quantile(anomaly_scores, 1.0 - target_fpr))
+        logger.info(
+            "Classifier anomaly threshold calibrated: target_fpr=%.4f, threshold=%.4f",
+            target_fpr,
+            self._anomaly_threshold,
         )
         return self
 
@@ -133,7 +164,11 @@ class FaultClassifier(DetectorBase):
         confidence = proba.max(axis=1)
         pred_labels = self._encoder.inverse_transform(pred_idx)  # type: ignore[union-attr]
 
-        fault_mask = pred_labels != FaultType.NORMAL.value
+        normal_idx = int(np.flatnonzero(self._encoder.classes_ == FaultType.NORMAL.value)[0])  # type: ignore[union-attr]
+        anomaly_score = 1.0 - proba[:, normal_idx]
+        fault_mask = (pred_labels != FaultType.NORMAL.value) & (
+            anomaly_score >= self._anomaly_threshold
+        )
         if not fault_mask.any():
             return pd.DataFrame(columns=CLASSIFIER_OUTPUT_COLS)
 
@@ -146,7 +181,7 @@ class FaultClassifier(DetectorBase):
             critical=self._settings.classifier_conf_critical,
             warning=self._settings.classifier_conf_warning,
         )
-        sub["anomaly_index"]   = sub["confidence"]       # higher confidence = stronger signal
+        sub["anomaly_index"]   = anomaly_score[fault_mask]
         sub["trigger_signal"]  = "fault_classifier"
         sub["detector_source"] = _DETECTOR_SOURCE
 
@@ -162,7 +197,14 @@ class FaultClassifier(DetectorBase):
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
-            joblib.dump({"model": self._model, "encoder": self._encoder}, out)
+            joblib.dump(
+                {
+                    "model": self._model,
+                    "encoder": self._encoder,
+                    "anomaly_threshold": self._anomaly_threshold,
+                },
+                out,
+            )
         except Exception as exc:
             raise ModelPersistenceError(f"Failed to save classifier to {out}: {exc}") from exc
         logger.info("FaultClassifier saved to %s", out)
@@ -182,6 +224,7 @@ class FaultClassifier(DetectorBase):
         obj = cls(settings=settings)
         obj._model   = data["model"]
         obj._encoder = data["encoder"]
+        obj._anomaly_threshold = data.get("anomaly_threshold", 0.5)
         obj._is_fitted = True
         logger.info("FaultClassifier loaded from %s", src)
         return obj

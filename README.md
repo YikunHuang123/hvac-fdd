@@ -1,470 +1,151 @@
 # HVAC-FDD
 
-**A modular Fault Detection and Diagnostics (FDD) system for Single-Duct Air Handling Units (SDAHU).** Combines physics-based rules, unsupervised anomaly detection, and supervised classification to identify six HVAC fault types, then serves results through a REST API and an interactive Streamlit dashboard.
+HVAC Fault Detection and Diagnostics (FDD) for the LBNL SDAHU (Single-Duct Air Handling Unit) dataset. The project combines ingestion, feature engineering, physics-based rules, unsupervised anomaly detection, supervised fault classification, evaluation, a REST API, and a Streamlit presentation layer.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.33+-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![scikit-learn](https://img.shields.io/badge/scikit--learn-1.3+-F7931E?logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+> This project is currently intended for offline experiments and end-to-end demonstrations, not as a production building-control system. Model metrics should come from command-line evaluation scripts and explicit split protocols. UI metrics are computed only from detection events stored in the database.
 
----
+## Features
 
-## 📋 Table of Contents
+- Load LBNL SDAHU CSV files and infer fault types from filenames.
+- Convert zone-wide data to long format, normalize units and column names, and create engineered features.
+- Run interpretable physics-based binary anomaly rules.
+- Run GMM or Isolation Forest unsupervised detectors; KAN, GNN, and TCN are experimental implementations, not current defaults.
+- Use XGBoost (with optional Random Forest, hierarchical XGBoost, or TCN) as an auxiliary fault-type classifier.
+- Persist detection events and pipeline-job status, then query them through FastAPI.
+- Use Streamlit to inspect events, statistics, job status, and stored evaluation results.
 
-- [Features](#-features)
-- [Architecture](#-architecture)
-- [Tech Stack](#-tech-stack)
-- [How It Works](#️-how-it-works)
-- [Dataset](#-dataset)
-- [Installation](#-installation)
-- [Usage](#-usage)
-- [Project Structure](#-project-structure)
-- [Follow-up Development Plans](#-follow-up-development-plans)
-- [Contributing](#-contributing)
-- [License & Contact](#-license--contact)
+## Architecture
 
----
+    LBNL CSV
+      -> ingestion: load / transform / feature engineering
+      -> detection: rules + unsupervised detector + optional classifier
+      -> evaluation: temporal split / leave-one-severity-out
+      -> PostgreSQL (events and jobs) + command-line reports
+      -> FastAPI + Streamlit UI
 
-## ✨ Features
+The recommended configuration is rules as the primary detector, GMM as an optional detector with a controlled normal-operation false-positive rate, and XGBoost as an auxiliary fault classifier. TCN, GNN, KAN, and Isolation Forest are comparison paths, not the current best model.
 
-| Feature | Description |
+## Fault types
+
+| Identifier | Meaning |
 |---|---|
-| 🔧 Rule-Based Detection | Five physics-based fault rules derived from ASHRAE Guideline 36 |
-| 🌲 Unsupervised Detection | Configurable engine (Isolation Forest / GMM / KAN) trained on normal data |
-| 🎯 Supervised Classifier | Multi-class fault classifier (Random Forest / XGBoost) |
-| 🔗 Modular Detectors | Each strategy is independent; combine freely at runtime via CLI flags |
-| ⚙️ Feature Engineering | 16 engineered features — tracking errors, temperature deltas, rolling statistics, lags |
-| 📦 Chunked Pipeline | Iterator-based processing prevents memory pressure on large datasets |
-| 📊 Evaluation Suite | Binary detection P/R/F1, multi-class confusion matrices, time-to-detect |
-| 🗄️ Persistence Layer | Detection events stored in PostgreSQL via Repository pattern |
-| 🌐 REST API | FastAPI backend with detection queries, pipeline triggers, and statistics |
-| 🖥️ Dashboard | Multi-page Streamlit UI for live monitoring, analytics, and evaluation |
+| normal | Normal operation |
+| coi_bias | Coil-inlet temperature sensor bias |
+| coi_leakage | Chilled-water coil leakage |
+| coi_stuck | Coil valve stuck |
+| damper_stuck | Outdoor-air damper stuck |
+| oa_bias | Outdoor-air temperature sensor bias |
 
----
+The rules detector answers whether an anomaly exists and which rule was triggered; it is not itself a fault-type classifier. Detection and classification metrics must therefore be reported separately.
 
-## 🎬 Architecture
+## Data and evaluation splits
 
-### System Architecture
+The raw LBNL data is not included. Download it separately and set LBNL_DATA_DIR. The default path is:
 
-```
-┌──────────────────────────┐
-│      Streamlit UI        │  streamlit run src/hvac_fdd/ui/Dashboard.py
-│      (port 8501)         │
-└────────────┬─────────────┘
-             │  HTTP (requests)
-             ▼
-┌──────────────────────────────────────────────────────────┐
-│                 FastAPI  (port 8000)                      │
-│  GET /api/v1/detections  │  POST /pipeline/run           │
-│  GET /stats/             │  GET  /health/live|ready      │
-└──────────────────────────────────────────────────────────┘
-             │
-             ▼
-┌──────────────────────────────────────────────────────────┐
-│                 Detection Engine                          │
-│  ┌───────────────┐  ┌──────────────────┐  ┌───────────┐ │
-│  │  Rules        │  │ Unsupervised     │  │ Classifier│ │
-│  │  (ASHRAE G36) │  │ (IF/GMM/KAN)     │  │ (RF/XGB)  │ │
-│  └───────────────┘  └──────────────────┘  └───────────┘ │
-└──────────────────────┬───────────────────────────────────┘
-                       │
-          ┌────────────┼────────────┐
-          ▼            ▼            ▼
-   ┌────────────┐  ┌────────┐  ┌──────────┐
-   │ PostgreSQL │  │Parquet │  │  Models  │
-   │ (events)   │  │ (data) │  │ (joblib) │
-   └────────────┘  └────────┘  └──────────┘
-```
+    data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU/
 
-### Detection Pipeline
+Unsupervised models must be trained on normal rows only. Supported protocols are:
 
-```
-Raw LBNL CSVs
-     │
-     ▼  Load (LBNLDataLoader)
-     │   · 21 CSV files, fault type inferred from filename
-     │
-     ▼  Transform (transforms.py)
-     │   · wide_zones_to_long  → 5 zone columns → 1 column + zone_id
-     │   · fahrenheit_to_celsius
-     │   · normalize_column_names
-     │
-     ▼  Feature Engineering (features.py)
-     │   · Tracking errors (valve, damper, fan)
-     │   · Temperature deltas (mixed-outside, return-supply)
-     │   · Rolling means (15 min and 60 min windows)
-     │   · Lag-1 features
-     │
-     ▼  Detect
-     │   · Rules  →  policy violations (threshold-based)
-     │   · Unsup  →  anomaly score (trained on NORMAL rows, configurable via .env)
-     │   · Clf    →  predicted fault + confidence
-     │
-     ▼  Persist
-         · DetectionORM → PostgreSQL
-         · PipelineJobORM → job status tracking
-```
+1. Temporal split: configure training and evaluation windows with evaluation-window.
+2. Leave-one-severity-out: scripts/run_leave_one_severity.py holds one severity file out for testing while the remaining severities are used for training.
 
----
+Every metric should state the model, split protocol, threshold policy, and whether a normal reference set was included.
 
-## 🛠 Tech Stack
+## Installation
 
-| Layer | Technology |
+The project is primarily run in the WSL Ubuntu Conda environment named hvac:
+
+    conda create -n hvac python=3.11 -y
+    conda activate hvac
+    pip install -e ".[dev]"
+    cp .env.example .env
+
+Default PostgreSQL configuration:
+
+    DATABASE_URL=postgresql://hvac:hvac@localhost:5432/hvac_fdd
+    LBNL_DATA_DIR=data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU
+    PROCESSED_DATA_DIR=data/processed
+    MODELS_DIR=models
+    API_HOST=0.0.0.0
+    API_PORT=8000
+    DASHBOARD_PORT=8501
+
+After creating the database, run alembic upgrade head. Unit tests use test settings and SQLite fixtures; that does not configure production PostgreSQL.
+
+## Usage
+
+### Preprocess data
+
+    python scripts/preprocess_data.py
+
+### Train and run detectors
+
+    python scripts/run_pipeline.py --train-unsup --train-clf
+    python scripts/run_pipeline.py --use-rules --use-unsup --use-clf --persist
+    python scripts/run_pipeline.py --use-rules --use-unsup --use-clf --evaluate
+    python scripts/run_pipeline.py --help
+
+Example leave-one-severity-out experiment:
+
+    python scripts/run_leave_one_severity.py --model rules_gmm --output-dir artifacts/holdout_severity/rules_gmm
+
+### Start the API
+
+    uvicorn hvac_fdd.api:create_app --factory --host 0.0.0.0 --port 8000
+
+Main endpoints:
+
+- GET /health/live and GET /health/ready
+- GET /api/v1/detections/ (filtering and pagination)
+- GET /stats/ and GET /stats/by-fault-type
+- POST /pipeline/run
+- GET /pipeline/jobs/{job_id}
+- /docs
+
+### Start the Streamlit UI
+
+    streamlit run src/hvac_fdd/ui/Dashboard.py --server.port 8501
+
+Start the API before opening the UI:
+
+| Page | Purpose |
 |---|---|
-| **Language** | Python 3.11+ |
-| **Web Framework** | FastAPI + Uvicorn |
-| **Dashboard** | Streamlit + Plotly |
-| **ML / Deep Learning** | scikit-learn (IF, RF), XGBoost, PyTorch, pykan (KAN) |
-| **Data Processing** | Pandas, NumPy, PyArrow (Parquet) |
-| **Database** | PostgreSQL 16+ via SQLAlchemy 2.0 |
-| **Migrations** | Alembic |
-| **Config** | Pydantic v2 + pydantic-settings |
-| **Model Serialization** | joblib |
-| **Testing** | pytest, httpx |
-| **Package Manager** | Conda |
+| Dashboard | Detection counts, alert levels, fault distribution, and recent events |
+| Detections | Filter events by time, zone, alert level, and fault type |
+| Analytics | Trend and distribution analysis of stored events |
+| Pipeline | Trigger an asynchronous job and inspect its status |
+| Evaluation | Auxiliary plots for database events with ground_truth |
 
----
+The UI is a presentation and operation layer, not a replacement for strict evaluation scripts. Without complete experiment output in the database, UI metrics must not be treated as final model conclusions.
 
-## ⚙️ How It Works
+### Tests
 
-### Fault Types
+    pytest -v
 
-The system targets six fault conditions found in the LBNL SDAHU dataset:
+## Project layout
 
-| Fault Type | Description |
-|---|---|
-| `NORMAL` | No fault — baseline operation |
-| `COI_BIAS` | Coil inlet temperature sensor bias |
-| `COI_LEAKAGE` | Chilled-water coil leakage |
-| `COI_STUCK` | Coil valve stuck |
-| `DAMPER_STUCK` | Outdoor air damper stuck |
-| `OA_BIAS` | Outdoor air temperature sensor bias |
+    src/hvac_fdd/ingestion/       loading, transforms, and feature engineering
+    src/hvac_fdd/detection/       rules, GMM, Isolation Forest, classifiers, and experiments
+    src/hvac_fdd/evaluation/      metrics and reports
+    src/hvac_fdd/db/              SQLAlchemy ORM and repositories
+    src/hvac_fdd/api/              FastAPI routes and schemas
+    src/hvac_fdd/ui/               Streamlit pages and API client
+    scripts/                       preprocessing, main pipeline, leave-one-severity-out
+    tests/                         unit and API tests
+    migrations/                    Alembic migrations
+    data/                          raw data and Parquet (normally not committed)
+    models/                        trained artifacts (commit selectively)
+    artifacts/                     experiment outputs (normally not committed)
 
-### Detection Strategies
+## Current project conclusions
 
-**Rules Detector (`LBNLRulesDetector`)**  
-Five physics-based rules encoded from ASHRAE Guideline 36. Each rule checks a specific sensor condition (e.g., supply air temperature falls below setpoint while the coil valve is commanded closed, indicating coil leakage) and emits an `INFO`, `WARNING`, or `CRITICAL` event depending on the rule. No training required.
+- Rules are currently the most stable and interpretable primary detector.
+- GMM is a complementary detector, but its threshold and normal-reference FPR must be reported.
+- XGBoost is suitable as an auxiliary fault-type classifier; its output does not prove that the binary detector identified the specific fault.
+- TCN has insufficient classification generalization in leave-one-severity-out experiments and is retained only for research comparison.
+- GNN, KAN, and Isolation Forest are optional or experimental paths, not defaults.
 
-**Unsupervised Anomaly Detection (`IsolationForest`, `GMM`, `KAN`)**  
-Trained exclusively on `NORMAL` rows. The engine is fully configurable via `unsupervised_model` in the configuration. 
-- **Isolation Forest**: Great for general anomaly detection.
-- **GMM**: Highly accurate statistical model modeling long-tail distributions.
-- **KAN**: Cutting-edge Deep Learning Kolmogorov-Arnold Network autoencoder for nonlinear manifold learning.
+## License
 
-**Fault Classifier (`FaultClassifier`)**  
-A supervised classifier (RandomForest or XGBoost) trained on all six classes. Returns the predicted fault type and a confidence score. Only non-NORMAL predictions generate a detection event.
+This project is released under the MIT License. Use of the LBNL dataset is subject to the publisher's license and citation requirements.
 
-### Evaluation
-
-The evaluation module computes:
-- **Binary metrics**: Precision, Recall, F1 at event level
-- **Multi-class metrics**: Per-class P/R/F1, confusion matrix
-- **Time-to-detect**: Minutes elapsed from fault onset to first detection
-
-Temporal splitting is used: January–September (months ≤ 9) for training, October–December for evaluation.
-
----
-
-## 📂 Dataset
-
-The project uses the **LBNL FDD Data Sets — SDAHU (Single-Duct Air Handling Unit)**, published by Lawrence Berkeley National Laboratory (LBNL). This dataset is **not included** in the repository and must be downloaded separately.
-
-### Dataset Overview
-
-| Property | Detail |
-|---|---|
-| **Source** | Lawrence Berkeley National Laboratory (LBNL) |
-| **System type** | Single-Duct Air Handling Unit (SDAHU) |
-| **Files** | 21 CSV files covering 6 fault conditions |
-| **Columns** | 31 sensor and actuator channels per record |
-| **Time resolution** | 1-minute interval measurements |
-| **Usage in project** | Training (January–September, months ≤ 9) and evaluation (October–December) splits |
-
-### Download Steps
-
-1. Visit the LBNL Buildings Technology and Urban Systems division website and search for **"LBNL FDD Data Sets SDAHU"**, or locate the dataset via the publication associated with this benchmark.
-
-2. Download the dataset archive (typically named `LBNL_FDD_Data_Sets_SDAHU_all_3.zip` or similar).
-
-3. Extract the archive so the CSV files are placed at:
-
-   ```
-   hvac-fdd/
-   └── data/
-       └── LBNL_FDD_Data_Sets_SDAHU_all_3/
-           └── LBNL_FDD_Dataset_SDAHU/
-               ├── SDAHU_COI_BIAS_1.csv
-               ├── SDAHU_COI_BIAS_2.csv
-               ├── SDAHU_COI_LEAKAGE_1.csv
-               ├── ...                         # 21 CSV files total
-               └── SDAHU_NORMAL_5.csv
-   ```
-
-4. Confirm the path matches `LBNL_DATA_DIR` in your `.env`:
-
-   ```env
-   LBNL_DATA_DIR=data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU
-   ```
-
-> The fault type for each file is automatically inferred from its filename by `LBNLDataLoader`. No manual labelling is required.
-
----
-
-## 🚀 Installation
-
-### Prerequisites
-
-- Python 3.11+
-- PostgreSQL 16+
-- [Conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) (Anaconda or Miniconda)
-
-### Steps
-
-**1. Clone the repository**
-
-```bash
-git clone https://github.com/YikunHuang123/hvac-fdd.git
-cd hvac-fdd
-```
-
-**2. Create and activate a conda environment**
-
-```bash
-conda create -n hvac python=3.11 -y
-conda activate hvac
-```
-
-**3. Install dependencies**
-
-```bash
-pip install -e ".[dev]"
-```
-
-**4. Configure environment**
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your settings:
-
-```env
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/hvac_fdd
-
-# Data paths
-LBNL_DATA_DIR=data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU
-PROCESSED_DATA_DIR=data/processed
-MODELS_DIR=models
-
-# API
-API_HOST=0.0.0.0
-API_PORT=8000
-
-# Dashboard
-DASHBOARD_PORT=8501
-```
-
-**5. Apply database migrations**
-
-```bash
-alembic upgrade head
-```
-
-**6. Download and place the dataset**
-
-Follow the [Dataset](#-dataset) section above.
-
----
-
-## 💡 Usage
-
-### Run the Ingestion Pipeline
-
-Process the raw LBNL CSVs into Parquet and store detection events:
-
-```bash
-# Run all detectors
-python scripts/run_pipeline.py --use-rules --use-unsup --use-clf
-
-# Train Unsupervised model (configured in .env), then run it
-python scripts/run_pipeline.py --train-unsup --use-unsup
-
-# Train classifier, then run it
-python scripts/run_pipeline.py --train-clf --use-clf
-
-# Train both, run all detectors, persist to DB, and evaluate
-python scripts/run_pipeline.py --train-unsup --train-clf --use-rules --use-unsup --use-clf --persist --evaluate
-```
-
-### Start the API Server
-
-```bash
-uvicorn hvac_fdd.api:create_app --factory --host 0.0.0.0 --port 8000 --reload
-```
-
-Interactive API docs are available at `http://localhost:8000/docs`.
-
-**Key endpoints:**
-
-```bash
-# Query detection events (with filters and pagination)
-GET /api/v1/detections?fault_type=COI_BIAS&alert_level=CRITICAL&limit=50
-
-# Trigger the pipeline asynchronously (returns 202 Accepted)
-POST /pipeline/run
-
-# Check pipeline job status
-GET /pipeline/jobs/{job_id}
-
-# Summary statistics
-GET /stats/
-
-# Stats grouped by fault type
-GET /stats/by-fault-type
-
-# Health checks
-GET /health/live
-GET /health/ready
-```
-
-### Launch the Dashboard
-
-```bash
-streamlit run src/hvac_fdd/ui/Dashboard.py
-```
-
-Navigate to `http://localhost:8501`. The dashboard has four pages:
-
-| Page | Content |
-|---|---|
-| **Detections** | Live detection event log with filters |
-| **Analytics** | Fault frequency and trend charts |
-| **Pipeline** | Run history and job status |
-| **Evaluation** | Detector performance metrics and confusion matrices |
-
-### Run Tests
-
-```bash
-pytest -v
-```
-
-Tests use an in-memory SQLite engine with auto-rollback transactions — no external database required.
-
----
-
-## 🗂 Project Structure
-
-```
-hvac-fdd/
-├── src/hvac_fdd/
-│   ├── config.py               # Pydantic Settings — all env vars with defaults
-│   ├── domain.py               # FaultType, AlertLevel, DetectionEvent
-│   ├── exceptions.py           # Custom exception hierarchy
-│   ├── ingestion/
-│   │   ├── base.py             # DataLoaderBase abstract class
-│   │   ├── lbnl_loader.py      # Reads 21 LBNL CSV files; infers fault type from filename
-│   │   ├── pipeline.py         # Load → transform → features → save orchestration
-│   │   ├── transforms.py       # wide_zones_to_long, F→C, column normalisation
-│   │   └── features.py         # 16 engineered features (tracking errors, deltas, rolling stats)
-│   ├── detection/
-│   │   ├── base.py             # DetectorBase with fit/predict interface; 24 feature columns
-│   │   ├── rules.py            # LBNLRulesDetector — 5 ASHRAE Guideline 36 rules
-│   │   ├── isolation_forest.py # IsolationForestDetector — trains on NORMAL rows only
-│   │   ├── classifier.py       # FaultClassifier — RandomForest, 6-class
-│   │   └── ensemble.py         # EnsembleDetector — combines rules + IF + classifier
-│   ├── evaluation/
-│   │   ├── metrics.py          # detection_report, classification_report_extended, time_to_detect
-│   │   └── report.py           # generate_report
-│   ├── db/
-│   │   ├── base.py             # Engine/session factory, declarative Base
-│   │   ├── orm.py              # DetectionORM, PipelineJobORM
-│   │   ├── detections.py       # DetectionRepository (filter, paginate)
-│   │   └── jobs.py             # JobRepository
-│   ├── api/
-│   │   ├── __init__.py         # create_app() factory with lifespan management
-│   │   ├── health.py           # /health/live  &  /health/ready
-│   │   ├── detections.py       # GET /api/v1/detections
-│   │   ├── pipeline.py         # POST /pipeline/run  &  GET /pipeline/jobs/{job_id}
-│   │   ├── stats.py            # GET /stats/  &  GET /stats/by-fault-type
-│   │   ├── schemas.py          # Request / response DTOs
-│   │   ├── deps.py             # FastAPI dependency injection
-│   │   └── middleware.py       # Request tracing
-│   └── ui/
-│       ├── Dashboard.py        # Streamlit entry point
-│       ├── _shared.py          # Shared components and styling
-│       ├── api_client.py       # HTTP client for the backend API
-│       └── pages/
-│           ├── 1_Detections.py
-│           ├── 2_Analytics.py
-│           ├── 3_Pipeline.py
-│           └── 4_Evaluation.py
-├── tests/
-│   ├── conftest.py             # Fixtures: test_settings, SQLite engine, db_session
-│   ├── test_ingestion.py       # Pipeline, transforms, feature engineering
-│   ├── test_detection.py       # Rules, isolation forest, classifier
-│   ├── test_db.py              # Repository CRUD, filtering, pagination
-│   ├── test_api.py             # Endpoint response schemas and error handling
-│   └── test_evaluation.py      # Metrics correctness
-├── scripts/
-│   └── run_pipeline.py         # CLI orchestrator (--train-if / --use-rules / --evaluate …)
-├── migrations/
-│   └── versions/
-│       ├── 001_initial_schema.py
-│       └── 002_add_fault_type_index.py
-├── data/
-│   ├── LBNL_FDD_Data_Sets_SDAHU_all_3/   # Raw CSV files (not in repo — download separately)
-│   └── processed/                         # Parquet output
-├── models/                                # Trained models: isolation_forest.joblib, classifier.joblib
-├── pyproject.toml
-├── alembic.ini
-└── .env.example
-```
-
----
-
-## 🔮 Follow-up Development Plans
-
-
----
-
-## 🤝 Contributing
-
-Contributions, bug reports, and feature requests are welcome.
-
-1. **Fork** the repository and create a feature branch:
-   ```bash
-   git checkout -b feat/your-feature-name
-   ```
-
-2. **Make your changes** — follow the existing code style (Ruff formatting).
-
-3. **Add or update tests** for any new behaviour:
-   ```bash
-   pytest -v
-   ```
-
-4. **Commit** with a descriptive message:
-   ```bash
-   git commit -m "feat: add XYZ detection rule"
-   ```
-
-5. **Open a Pull Request** against `main`. Include:
-   - A clear description of the change and its motivation
-   - Steps to reproduce (for bug fixes)
-   - Any relevant config or environment changes
-
-**Reporting bugs:** Open a GitHub Issue with the label `bug`, your Python version, and a minimal reproduction snippet.
-
----
-
-## 📄 License & Contact
-
-This project is licensed under the **MIT License**.
-
-**Author:** Yikun Huang  
-**Email:** q1945948369@gmail.com  
-**GitHub:** [@YikunHuang123](https://github.com/YikunHuang123)
-
-> Built as an end-to-end HVAC fault detection engineering showcase — covering multi-strategy ML detection, async REST API design, interactive dashboard development, and production-grade data pipeline architecture.

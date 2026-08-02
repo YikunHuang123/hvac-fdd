@@ -123,6 +123,8 @@ data/
 
 # Model
 models/
+models_*/
+artifacts/
 
 .idea/
 .agent/
@@ -130,3 +132,5 @@ models/
 AGENTS.md
 .claude/
 README_ZH.md
+
+.npm-cache/

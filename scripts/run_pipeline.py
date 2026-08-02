@@ -90,9 +90,22 @@ def _train_unsup(
         raise ValueError(f"Unknown unsupervised model: {settings.unsupervised_model}")
 
 
-def _train_classifier(frames: list[pd.DataFrame], settings) -> None:
+def _train_classifier(
+    frames: list[pd.DataFrame],
+    settings,
+    *,
+    calibration_frames: list[pd.DataFrame] | None = None,
+    target_fpr: float | None = None,
+) -> None:
     df = pd.concat(frames, ignore_index=True)
-    FaultClassifier(settings).fit(df).save(settings.models_dir / "classifier.joblib")
+    classifier = FaultClassifier(settings).fit(df)
+    if target_fpr is not None:
+        if not calibration_frames:
+            raise ValueError("Classifier threshold calibration requires validation frames")
+        classifier.calibrate_anomaly_threshold(
+            pd.concat(calibration_frames, ignore_index=True), target_fpr
+        )
+    classifier.save(settings.models_dir / "classifier.joblib")
 
 
 def main() -> None:
@@ -133,6 +146,11 @@ def main() -> None:
             "in the selected window"
         ),
     )
+    parser.add_argument(
+        "--include-normal-reference",
+        action="store_true",
+        help="When holding out a fault scenario, also evaluate AHU_annual as a normal reference",
+    )
     parser.add_argument("--models-dir", type=str, help="Override models directory path")
     parser.add_argument(
         "--gmm-target-fpr",
@@ -141,6 +159,11 @@ def main() -> None:
             "Calibrate the GMM warning threshold on the validation window "
             "to target this normal-operation row-level FPR (requires --train-unsup)"
         ),
+    )
+    parser.add_argument(
+        "--classifier-target-fpr",
+        type=float,
+        help="Calibrate classifier anomaly threshold on validation normal rows",
     )
 
     args = parser.parse_args()
@@ -155,6 +178,11 @@ def main() -> None:
             parser.error("--gmm-target-fpr requires --train-unsup")
         if not 0.0 < args.gmm_target_fpr < 1.0:
             parser.error("--gmm-target-fpr must be between 0 and 1")
+    if args.classifier_target_fpr is not None:
+        if not args.train_clf:
+            parser.error("--classifier-target-fpr requires --train-clf")
+        if not 0.0 < args.classifier_target_fpr < 1.0:
+            parser.error("--classifier-target-fpr must be between 0 and 1")
 
     settings = get_settings()
     if args.models_dir:
@@ -167,6 +195,7 @@ def main() -> None:
     unsup_train_frames: list[pd.DataFrame] = []
     clf_train_frames: list[pd.DataFrame] = []
     calibration_frames: list[pd.DataFrame] = []
+    classifier_calibration_frames: list[pd.DataFrame] = []
     eval_frames:      list[pd.DataFrame] = []
     source_files = sorted(Path(settings.lbnl_data_dir).glob("*.csv"))
     if args.holdout_scenario and args.holdout_scenario not in {p.name for p in source_files}:
@@ -174,6 +203,9 @@ def main() -> None:
 
     for i, chunk_df in enumerate(iter_ingestion_pipeline(settings)):
         chunk_df["event_time"] = pd.to_datetime(chunk_df["event_time"])
+        chunk_df["scenario_file"] = (
+            source_files[i].name if i < len(source_files) else f"file_{i}"
+        )
 
         base_year = int(chunk_df["event_time"].dt.year.min())
         if args.split_protocol == "common":
@@ -220,15 +252,13 @@ def main() -> None:
 
         if not eval_chunk.empty:
             eval_chunk = eval_chunk.copy()
-            eval_chunk["scenario_file"] = (
-                source_files[i].name if i < len(source_files) else f"file_{i}"
-            )
 
         is_holdout = (
             args.holdout_scenario is not None
             and i < len(source_files)
             and source_files[i].name == args.holdout_scenario
         )
+        is_normal_reference = source_files[i].stem.lower() == "ahu_annual"
 
         if args.train_unsup and not train_chunk.empty and not is_holdout:
             unsup_train_frames.append(train_chunk[train_chunk["fault_type"] == FaultType.NORMAL.value])
@@ -240,6 +270,12 @@ def main() -> None:
             calibration_frames.append(
                 validation_chunk[validation_chunk["fault_type"] == FaultType.NORMAL.value]
             )
+        if (
+            args.classifier_target_fpr is not None
+            and not validation_chunk.empty
+            and not is_holdout
+        ):
+            classifier_calibration_frames.append(validation_chunk)
 
         if args.train_clf and not train_chunk.empty and not is_holdout:
             # Train the classifier on both normal and fault data so it can act as a 
@@ -257,7 +293,11 @@ def main() -> None:
         if (
             not eval_chunk.empty
             and (uses_detector or args.evaluate)
-            and (args.holdout_scenario is None or is_holdout)
+            and (
+                args.holdout_scenario is None
+                or is_holdout
+                or (args.include_normal_reference and is_normal_reference)
+            )
         ):
             eval_frames.append(eval_chunk)
 
@@ -273,7 +313,12 @@ def main() -> None:
 
     if args.train_clf and clf_train_frames:
         logger.info("Phase 2b: Training Classifier on 20%% Sampled data...")
-        _train_classifier(clf_train_frames, settings)
+        _train_classifier(
+            clf_train_frames,
+            settings,
+            calibration_frames=classifier_calibration_frames,
+            target_fpr=args.classifier_target_fpr,
+        )
 
     # ── Phase 3: Per-scenario Detection ──────────────────────────────────────
     # eval_frames is fully in memory from Phase 1. Iterating one frame at a time
