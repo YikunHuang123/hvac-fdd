@@ -48,6 +48,7 @@ from hvac_fdd.evaluation.metrics import (
     classification_report_extended,
     detection_report,
 )
+from hvac_fdd.ingestion.parquet import iter_parquet_pipeline
 from hvac_fdd.ingestion.pipeline import iter_ingestion_pipeline
 
 # Configure English logging
@@ -153,6 +154,12 @@ def main() -> None:
     )
     parser.add_argument("--models-dir", type=str, help="Override models directory path")
     parser.add_argument(
+        "--input-format",
+        choices=("csv", "parquet"),
+        default="csv",
+        help="Input path: stream and engineer CSV files, or read projected Parquet caches",
+    )
+    parser.add_argument(
         "--gmm-target-fpr",
         type=float,
         help=(
@@ -201,7 +208,12 @@ def main() -> None:
     if args.holdout_scenario and args.holdout_scenario not in {p.name for p in source_files}:
         parser.error(f"Unknown --holdout-scenario file: {args.holdout_scenario}")
 
-    for i, chunk_df in enumerate(iter_ingestion_pipeline(settings)):
+    ingestion_iterator = (
+        iter_parquet_pipeline(settings)
+        if args.input_format == "parquet"
+        else iter_ingestion_pipeline(settings)
+    )
+    for i, chunk_df in enumerate(ingestion_iterator):
         chunk_df["event_time"] = pd.to_datetime(chunk_df["event_time"])
         chunk_df["scenario_file"] = (
             source_files[i].name if i < len(source_files) else f"file_{i}"
