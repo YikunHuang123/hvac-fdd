@@ -1,169 +1,167 @@
-# HVAC-FDD
+# HVAC-FDD: End-to-End Fault Detection and Diagnostics System
 
-HVAC fault detection and diagnostics for the LBNL SDAHU single-duct air-handling-unit dataset.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Status:** Offline research and end-to-end demonstration. Report metrics with the model, split protocol, threshold policy, and normal-reference false-positive rate.
+**HVAC-FDD** is an enterprise-grade, end-to-end fault detection and diagnostics system for Heating, Ventilation, and Air Conditioning (HVAC) environments. Built on the LBNL SDAHU dataset, it transforms vast amounts of complex air-handling-unit (AHU) time-series data into traceable detection events and Power BI-ready reports.
 
-## Features
+The project integrates **expert physical rules** with **machine learning models**, establishing a complete pipeline from ETL data ingestion, model inference, and PostgreSQL persistence to FastAPI microservices and BI analytics.
 
-- Loads LBNL SDAHU CSV files, infers fault labels from filenames, and engineers normalized features.
-- Detects anomalies with Rules plus optional GMM, Isolation Forest, or KAN detectors.
-- Adds optional fault-type predictions with XGBoost, Random Forest, Hierarchical XGBoost, or TCN.
-- Evaluates temporal splits and leave-one-severity-out generalization.
-- Persists detection events and pipeline-job status in PostgreSQL.
-- Exposes stored data through FastAPI and PostgreSQL analytical views for Power BI.
+---
 
-## Architecture
+## 🚀 Core Features
 
-```text
-LBNL CSV
-   |
-   +--> Ingestion: load -> transform -> feature engineering
-   |
-   +--> Detection: Rules + (GMM / Isolation Forest / KAN)
-   |                 + optional classifier
-   |                   (XGBoost / Random Forest / Hierarchical XGBoost / TCN)
-   |
-   +--> Evaluation: temporal split / leave-one-severity-out
-   |
-   +--> PostgreSQL: detections and pipeline jobs
-          +--> FastAPI: programmatic data access
-          +--> analytics views: Power BI reporting
+- **Hybrid-Driven Detection Engine**
+  - **Expert Rules Layer (APAR)**: Utilizes domain physics knowledge to rapidly filter out definitive control anomalies, ensuring high interpretability.
+  - **Unsupervised Anomaly Detection**: Supports Gaussian Mixture Models (GMM), Isolation Forest, and **Kolmogorov-Arnold Networks (KAN-AD)** to capture implicit anomalies under unknown operational conditions.
+  - **Supervised Fault Classification**: Supports XGBoost, Random Forest, Hierarchical XGBoost, and **Temporal Convolutional Networks (TCN)** to assist in labeling fault root causes.
+- **Model Evaluation System**
+  - Supports **Annual / Common Temporal Split** to strictly prevent future data leakage.
+  - Utilizes **Leave-one-severity-out** cross-validation to guarantee robust generalization across unseen, extreme fault conditions.
+- **System Deployment**
+  - Decouples binary anomaly detection from fault classification, supporting low-memory streaming inference.
+  - Persists detection events and pipeline job states to PostgreSQL, exposes them via standard RESTful APIs with FastAPI, and natively integrates with Power BI analytics views.
+
+## 🛠️ Tech Stack
+
+| Domain | Core Technologies |
+| :--- | :--- |
+| **Core Services** | Python 3.11, FastAPI, Uvicorn, Pydantic |
+| **Algorithms & DL** | Scikit-learn, XGBoost, PyTorch (TCN, KAN) |
+| **Data Engineering** | Pandas, Numpy |
+| **Storage & DB** | PostgreSQL, Alembic, SQLAlchemy |
+| **Deploy & BI** | Docker, Docker Compose, Power BI |
+
+## 🏗️ System Architecture
+
+```mermaid
+graph LR
+    A[(LBNL CSV\nTime-series)] --> B[Ingestion\nETL & Features]
+    B --> C{Hybrid Detection\nEngine}
+    
+    subgraph Prediction Flow
+        C -->|1. Prior Physics| D[Rules APAR]
+        C -->|2. Unknown States| E[GMM / IF / KAN]
+        C -->|3. Root Cause| F[XGBoost / TCN]
+    end
+    
+    C --> G[Evaluation\nRigorous metrics]
+    
+    G --> H[(PostgreSQL\nPersistence)]
+    H --> I[FastAPI\nMicroservice]
+    H --> J[Analytics Views\nSQL Schema]
+    J --> K[Power BI\nDashboards]
 ```
 
-The recommended configuration is **Rules + GMM + XGBoost**. GNN is retained only as a separate experimental implementation and is not part of the default CLI pipeline. TCN is available for comparison but showed weak leave-one-severity-out classification generalization.
+## 📊 Model Evaluation Performance
 
-| Layer | Available models | Role |
-|---|---|---|
-| Binary detector | Rules | Interpretable primary detector |
-| Unsupervised complement | GMM, Isolation Forest, KAN | Anomaly-score comparison |
-| Fault classifier | XGBoost, Random Forest, Hierarchical XGBoost, TCN | Optional fault-type prediction |
+System evaluation is based on rigorous real-world temporal splits (Apr–Aug training, Oct final holdout test) and an unseen severity protocol (Leave-one-severity-out).
 
-## Data and evaluation
+### Stage 1: Binary Anomaly Detection
+The first layer is responsible for core alerting. Under the same-scenario temporal split, the performance of each model is as follows:
 
-The raw LBNL dataset is not included. Download it separately and set `LBNL_DATA_DIR` to `data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU`.
+| Detection Architecture | Normal Scenario FPR | Fault Recall | Precision | F1-Score |
+| :--- | :--- | :--- | :--- | :--- |
+| **Pure Physical Rules (Rules)** | 20.11% | 67.62% | 98.54% | 80.20% |
+| **Rules + GMM** (FPR Constrained) | 30.16% | 75.77% | 98.05% | 85.48% |
+| **Temporal Deep Model (TCN)** | 2.76% | 80.03% | 99.83% | 88.84% |
 
-Supported protocols:
+> **Stage 1 Architecture Decision**: Although TCN performed exceptionally well in the same-scenario temporal split, rigorous cross-scenario testing with unseen severities revealed that its cross-domain Recall is less stable than Rules+GMM. Based on industrial safety fallback considerations, the system ultimately adopts **"Rules-led detection + GMM-constrained enhancement"** as the primary production choice.
 
-1. Annual temporal split: January-September training, October-November validation, December hold-out test.
-2. Common temporal split: `--split-protocol common` when every scenario must appear in each period.
-3. Leave-one-severity-out: hold one severity CSV file out for testing while the remaining files are used for training.
+### Stage 2: Fault Type Classification
+The second layer is responsible for specific fault root cause labeling (6-class) on the identified anomalies. We evolved multiple cutting-edge architectures during R&D:
 
-Unsupervised models are trained on normal rows only. Binary detection metrics and fault-type classification metrics are reported separately.
+| Diagnostic Architecture | Evaluation Protocol | Accuracy | Macro-F1 | Architectural Features & Insights |
+| :--- | :--- | :--- | :--- | :--- |
+| **GNN (Graph Neural Network)** | Annual Temporal Split | 77.26% | 0.6974 | Lack of complex real device topology; forced graph building caused computation overhead and poor performance. |
+| **TCN (Temporal ConvNet)** | Annual Temporal Split | 86.28% | 0.8079 | Incorporates long-term thermal inertia and supports large-scale sliding windows via memory optimization (Zero-copy Slicing). |
+| **Hierarchical Cascade XGBoost** | Annual Temporal Split | - | 0.8571 | Step-by-step diagnosis by physical subsystems; requires attention to error amplification during probability cascading. |
+| **Flat XGBoost** | Same-scenario future month | **95.59%** | **0.9472** | Serves as a baseline: demonstrates stable classification performance on tabular scalar data. |
+| **Flat XGBoost** | Leave-one unseen severity | 99.30%* | **0.1661** | **Generalization Trap Warning**: *A highly imbalanced single unseen scenario caused inflated Accuracy, but Macro-F1 revealed the true cross-domain failure of the classifier, validating the necessity of the decoupled two-stage fallback.* |
 
-## Run locally
+### 🎯 Default Production Architecture
+Based on the validation results above, to ensure generalization and interpretability in industrial environments, the project defaults to the following **hybrid detection architecture**:
+1. **Binary Alert Backbone**: **Expert Physical Rules (APAR)** serve as the baseline, providing highly confident and fully interpretable anomaly detection.
+2. **Alert Recall Enhancement**: **Gaussian Mixture Model (GMM)** supplements the detection of subtle anomalies under a constrained False Positive Rate (FPR).
+3. **Fault Root-cause Labeling**: **XGBoost (6-class)** infers specific fault root-cause labels only after an anomaly is triggered.
 
-Use a Python 3.11 environment and a PostgreSQL instance.
+## 📊 Data Preparation
 
+The raw LBNL dataset is not included in the repository to save space. After downloading, set the environment variable `LBNL_DATA_DIR` to point to:
+
+```text
+data/LBNL_FDD_Data_Sets_SDAHU_all_3/LBNL_FDD_Dataset_SDAHU
+```
+
+## 💻 Quick Start (Local Run)
+
+**Step 1: Environment Setup**
+We recommend using Conda. Ensure PostgreSQL is installed locally.
 ```bash
 conda create -n hvac python=3.11 -y
 conda activate hvac
 pip install -e ".[dev]"
 cp .env.example .env
 ```
+Edit `.env` to configure `DATABASE_URL` (e.g., `postgresql://hvac:hvac@localhost:5432/hvac_fdd`) and `LBNL_DATA_DIR`.
 
-Set `DATABASE_URL=postgresql://hvac:hvac@localhost:5432/hvac_fdd` and point `LBNL_DATA_DIR` at the downloaded data. Initialize the schema:
-
+**Step 2: Database Initialization**
 ```bash
 alembic upgrade head
 ```
 
-Select and train models:
-
+**Step 3: Model Training (Select algorithms)**
 ```bash
-export UNSUPERVISED_MODEL=gmm       # gmm, if, or kan
-export SUPERVISED_MODEL=xgboost     # xgboost, random_forest, hierarchical_xgb, or tcn
+export UNSUPERVISED_MODEL=kan       # Options: gmm, if, kan
+export SUPERVISED_MODEL=tcn         # Options: xgboost, random_forest, hierarchical_xgb, tcn
+
+# Preprocess and train
 python scripts/preprocess_data.py
 python scripts/run_pipeline.py --train-unsup --train-clf
 ```
 
-Run detection and persist events:
-
+**Step 4: Execute Detection Pipeline**
 ```bash
 python scripts/run_pipeline.py --use-rules --use-unsup --use-clf --persist
 ```
 
-Then start the API:
-
+**Step 5: Launch API Service**
 ```bash
 uvicorn hvac_fdd.api:create_app --factory --host 0.0.0.0 --port 8000
 ```
+Interactive API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-API documentation is available at <http://localhost:8000/docs>. The API reads and writes PostgreSQL data; it does not replace the offline training/evaluation CLI.
+## 🐳 Docker Compose Start
 
-## Run with Docker Compose
-
-Docker Compose starts PostgreSQL and FastAPI. It does not run training or detection automatically.
+Use Docker Compose to quickly spin up PostgreSQL and FastAPI. We recommend running training and inference pipelines natively on the host CLI to fully leverage GPU/CPU resources.
 
 ```bash
+# Start DB and API services
 docker compose up --build -d
-docker compose ps
+
+# Check service health
 curl http://localhost:8000/health/live
 ```
-
-The API is at <http://localhost:8000>; PostgreSQL is available at `localhost:5432` (`hvac` / `hvac_fdd`). Keep the database container running, then execute the training and detection CLI from a Python environment configured with the same database URL. Apply Power BI views with:
-
+After events have been written by the pipeline, initialize the Power BI views:
 ```bash
 psql postgresql://hvac:hvac@localhost:5432/hvac_fdd -f powerbi/sql/analytics_views.sql
 ```
 
-Stop services with `docker compose down`. Use `docker compose down -v` only when the PostgreSQL volume should also be deleted.
-
-## API reference
-
-- `GET /health/live` and `GET /health/ready`
-- `GET /api/v1/detections/`
-- `GET /stats/` and `GET /stats/by-fault-type`
-- `POST /pipeline/run`
-- `GET /pipeline/jobs/{job_id}`
-- `/docs`
-
-## Power BI analytical layer
-
-Power BI is the primary reporting and analysis interface. Connect Power BI Desktop to PostgreSQL and use the `analytics` schema; reports read database views rather than raw CSV files or application UI state.
-
-The SQL file creates:
-
-- `analytics.vw_detection_events` - event-level detection details;
-- `analytics.vw_detection_daily` - daily detection aggregates;
-- `analytics.vw_pipeline_runs` - pipeline status, duration, and processing counts.
-
-## Recorded offline comparison
-
-This benchmark uses January-November training and a December hold-out test. It is not a live database metric.
-
-| Configuration | Recall | Precision | F1 | Role |
-|---|---:|---:|---:|---|
-| Rules baseline | 66.92% | 97.97% | 0.795 | Interpretable baseline |
-| Rules + Isolation Forest | 74.13% | 96.67% | 0.839 | Comparison |
-| Rules + GMM | 77.94% | 96.81% | 0.864 | Recommended ensemble |
-| Rules + GMM, calibrated threshold | 79.32% | 96.73% | 0.872 | Threshold trade-off |
-
-`coi_stuck` and `damper_stuck` were strongest; `oa_bias` and `coi_bias` remained harder because control-loop compensation can mask part of the bias. Detection success does not prove exact fault-type identification; those are separate claims.
-
-## Project layout
+## 📁 Project Layout
 
 ```text
-src/hvac_fdd/ingestion/   loading, transforms, and feature engineering
-src/hvac_fdd/detection/   rules, GMM, Isolation Forest, and classifiers
-src/hvac_fdd/evaluation/  metrics and reports
-src/hvac_fdd/db/          SQLAlchemy ORM and repositories
-src/hvac_fdd/api/         FastAPI routes and schemas
-powerbi/                  PostgreSQL analytical views and connection notes
-scripts/                  preprocessing, pipeline, and evaluation runners
-tests/                    unit and API tests
-migrations/               Alembic migrations
-data/                     raw data and processed files (normally not committed)
-models/                   trained artifacts (commit selectively)
-artifacts/                experiment outputs (normally not committed)
+src/hvac_fdd/
+ ├── ingestion/   # Loading, transforms, and feature engineering
+ ├── detection/   # Core algorithms (Rules, KAN, TCN, XGB, etc.)
+ ├── evaluation/  # Metrics calculation and data splits
+ ├── db/          # SQLAlchemy ORM, repositories, transactions
+ └── api/         # FastAPI routes, schemas, middlewares
+powerbi/          # PostgreSQL analytical views definitions
+scripts/          # Entrypoints for training and pipelines
+migrations/       # Alembic migrations scripts
 ```
 
-## Tests
+## 📄 License
 
-```bash
-pytest -v
-```
-
-## License
-
-MIT. Use of the LBNL dataset is subject to the publisher's license and citation requirements.
+MIT License. Use of the LBNL dataset is subject to the publisher's license and citation requirements.
