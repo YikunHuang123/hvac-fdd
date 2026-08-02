@@ -132,5 +132,6 @@ artifacts/
 .agents/
 AGENTS.md
 .claude/
+README_ZH.md
 
 .npm-cache/
