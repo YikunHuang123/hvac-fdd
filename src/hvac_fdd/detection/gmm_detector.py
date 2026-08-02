@@ -128,6 +128,38 @@ class GMMDetector(DetectorBase):
         logger.debug("GMMDetector.predict: %d anomalies / %d valid rows", len(sub), len(valid_df))
         return _select_output(sub)
 
+    def calibrate_warning_threshold(
+        self,
+        df: pd.DataFrame,
+        target_fpr: float,
+    ) -> "GMMDetector":
+        """Calibrate the warning threshold on validation normal-operation data.
+
+        The supplied frame must belong to a validation split; it is never used
+        during GMM fitting.  ``target_fpr`` is the maximum desired row-level
+        false-positive rate on that validation normal set.
+        """
+        self._require_fitted()
+        if not 0.0 < target_fpr < 1.0:
+            raise ValueError("target_fpr must be between 0 and 1")
+
+        normal_df = df[df["fault_type"] == FaultType.NORMAL.value]
+        X = _clean_features(normal_df)
+        if len(X) == 0:
+            raise ValueError("Validation data contains no complete normal rows")
+
+        X_scaled = self._scaler.transform(X)  # type: ignore[union-attr]
+        scores = -self._model.score_samples(X_scaled)  # type: ignore[union-attr]
+        self._threshold_warning = float(np.quantile(scores, 1.0 - target_fpr))
+        if self._threshold_critical < self._threshold_warning:
+            self._threshold_critical = self._threshold_warning
+        logger.info(
+            "GMM warning threshold calibrated on %d validation normal rows: "
+            "target_fpr=%.4f, threshold=%.4f",
+            len(X), target_fpr, self._threshold_warning,
+        )
+        return self
+
     # ── Persistence ───────────────────────────────────────────────────────────
 
     def save(self, path: Path | str) -> None:

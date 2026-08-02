@@ -20,6 +20,7 @@ from hvac_fdd.detection.base import NUMERIC_FEATURES, PREDICT_OUTPUT_COLS
 from hvac_fdd.detection.classifier import CLASSIFIER_OUTPUT_COLS, FaultClassifier
 from hvac_fdd.detection.ensemble import EnsembleDetector
 from hvac_fdd.detection.isolation_forest import IsolationForestDetector
+from hvac_fdd.detection.gmm_detector import GMMDetector
 from hvac_fdd.detection.rules import LBNLRulesDetector
 from hvac_fdd.domain import AlertLevel, DetectionEvent, FaultType
 from hvac_fdd.exceptions import DetectorNotFittedError
@@ -572,3 +573,28 @@ class TestEnsembleDetector:
         df["valve_tracking_err_15_mean"] = 20.0
         result = fitted_ensemble.detect(df)
         assert any(e.ground_truth is not None for e in result)
+
+
+class TestGMMThresholdCalibration:
+    def test_calibration_uses_validation_normal_scores(self, test_settings):
+        settings = test_settings.model_copy(update={"gmm_n_components": 1})
+        train = _make_feature_df(n_rows=120, fault_type=FaultType.NORMAL.value)
+        validation = _make_feature_df(n_rows=120, fault_type=FaultType.NORMAL.value)
+        validation["temp_supply_celsius"] += np.linspace(0.0, 4.0, len(validation))
+
+        detector = GMMDetector(settings).fit(train)
+        original = detector._threshold_warning
+        detector.calibrate_warning_threshold(validation, target_fpr=0.10)
+
+        assert detector._threshold_warning != original
+        scores = -detector._model.score_samples(  # type: ignore[union-attr]
+            detector._scaler.transform(validation[NUMERIC_FEATURES].values)  # type: ignore[union-attr]
+        )
+        assert np.mean(scores >= detector._threshold_warning) <= 0.11
+
+    def test_calibration_rejects_invalid_target(self, test_settings):
+        settings = test_settings.model_copy(update={"gmm_n_components": 1})
+        train = _make_feature_df(n_rows=40, fault_type=FaultType.NORMAL.value)
+        detector = GMMDetector(settings).fit(train)
+        with pytest.raises(ValueError, match="target_fpr"):
+            detector.calibrate_warning_threshold(train, target_fpr=1.0)

@@ -5,7 +5,7 @@ HVAC FDD Pipeline Integration Script (Stable Edition).
 Usage Guide:
 --------------------------------------------------
 A. Training Mode:
-   1. Train Unsupervised Model (using 100% Normal Jan-Sep data):
+   1. Train Unsupervised Model (using 100% Normal training-window data):
       $ python scripts/run_pipeline.py --train-unsup
    2. Train Classifier only (using 20% sampled Jan-Sep data):
       $ python scripts/run_pipeline.py --train-clf
@@ -63,11 +63,23 @@ logger = logging.getLogger("run_pipeline")
 # Encapsulated in functions so the concatenated DataFrame is released from memory
 # as soon as training completes (scope-based GC rather than explicit del).
 
-def _train_unsup(frames: list[pd.DataFrame], settings) -> None:
+def _train_unsup(
+    frames: list[pd.DataFrame],
+    settings,
+    *,
+    calibration_frames: list[pd.DataFrame] | None = None,
+    target_fpr: float | None = None,
+) -> None:
     df = pd.concat(frames, ignore_index=True)
     if settings.unsupervised_model == "gmm":
         from hvac_fdd.detection.gmm_detector import GMMDetector
-        GMMDetector(settings).fit(df).save(settings.models_dir / "gmm_detector.joblib")
+        detector = GMMDetector(settings).fit(df)
+        if target_fpr is not None:
+            if not calibration_frames:
+                raise ValueError("GMM threshold calibration requires validation frames")
+            calibration_df = pd.concat(calibration_frames, ignore_index=True)
+            detector.calibrate_warning_threshold(calibration_df, target_fpr)
+        detector.save(settings.models_dir / "gmm_detector.joblib")
     elif settings.unsupervised_model == "if":
         from hvac_fdd.detection.isolation_forest import IsolationForestDetector
         IsolationForestDetector(settings).fit(df).save(settings.models_dir / "if_detector.joblib")
@@ -87,8 +99,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="HVAC FDD Pipeline Runner")
 
     # -- Training Flags --
-    parser.add_argument("--train-unsup", action="store_true", help="Train unsupervised model independently (100% Normal data)")
-    parser.add_argument("--train-clf", action="store_true", help="Train Classifier independently (20% sampled data)")
+    parser.add_argument("--train-unsup", action="store_true", help="Train unsupervised model independently on normal data")
+    parser.add_argument("--train-clf", action="store_true", help="Train classifier independently on sampled data")
 
     # -- Detection Components --
     parser.add_argument("--use-rules", action="store_true", help="Enable physics-based rules detector")
@@ -102,9 +114,34 @@ def main() -> None:
         "--evaluation-window",
         choices=("validation", "final"),
         default="final",
-        help="Evaluate Oct-Nov validation data or the untouched Dec final hold-out",
+        help="Evaluate the validation window or the untouched final hold-out",
+    )
+    parser.add_argument(
+        "--split-protocol",
+        choices=("annual", "common"),
+        default="annual",
+        help=(
+            "annual: train Jan-Sep, validate Oct-Nov, test Dec; "
+            "common: train Apr-Aug, validate Sep, test Oct so every scenario is present"
+        ),
+    )
+    parser.add_argument(
+        "--holdout-scenario",
+        type=str,
+        help=(
+            "Optional CSV filename to exclude from training and evaluate alone "
+            "in the selected window"
+        ),
     )
     parser.add_argument("--models-dir", type=str, help="Override models directory path")
+    parser.add_argument(
+        "--gmm-target-fpr",
+        type=float,
+        help=(
+            "Calibrate the GMM warning threshold on the validation window "
+            "to target this normal-operation row-level FPR (requires --train-unsup)"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -113,6 +150,11 @@ def main() -> None:
         parser.error("--persist requires at least one --use-rules/--use-unsup/--use-clf flag")
     if args.evaluate and not uses_detector:
         logger.warning("--evaluate without any --use-xxx flag will report zero detections")
+    if args.gmm_target_fpr is not None:
+        if not args.train_unsup:
+            parser.error("--gmm-target-fpr requires --train-unsup")
+        if not 0.0 < args.gmm_target_fpr < 1.0:
+            parser.error("--gmm-target-fpr must be between 0 and 1")
 
     settings = get_settings()
     if args.models_dir:
@@ -124,28 +166,82 @@ def main() -> None:
 
     unsup_train_frames: list[pd.DataFrame] = []
     clf_train_frames: list[pd.DataFrame] = []
+    calibration_frames: list[pd.DataFrame] = []
     eval_frames:      list[pd.DataFrame] = []
+    source_files = sorted(Path(settings.lbnl_data_dir).glob("*.csv"))
+    if args.holdout_scenario and args.holdout_scenario not in {p.name for p in source_files}:
+        parser.error(f"Unknown --holdout-scenario file: {args.holdout_scenario}")
 
     for i, chunk_df in enumerate(iter_ingestion_pipeline(settings)):
         chunk_df["event_time"] = pd.to_datetime(chunk_df["event_time"])
 
-        # Train on Jan-Sep. Oct-Nov is reserved for validation and Dec is final hold-out.
         base_year = int(chunk_df["event_time"].dt.year.min())
-        train_cutoff = pd.Timestamp(f"{base_year}-09-30 23:59:59")
-        validation_cutoff = pd.Timestamp(f"{base_year}-11-30 23:59:59")
-        train_chunk = chunk_df[chunk_df["event_time"] <= train_cutoff]
+        if args.split_protocol == "common":
+            train_start = pd.Timestamp(f"{base_year}-04-01 00:00:00")
+            train_cutoff = pd.Timestamp(f"{base_year}-08-31 23:59:59")
+            validation_cutoff = pd.Timestamp(f"{base_year}-09-30 23:59:59")
+            final_cutoff = pd.Timestamp(f"{base_year}-10-31 23:59:59")
+        else:
+            train_start = pd.Timestamp(f"{base_year}-01-01 00:00:00")
+            train_cutoff = pd.Timestamp(f"{base_year}-09-30 23:59:59")
+            validation_cutoff = pd.Timestamp(f"{base_year}-11-30 23:59:59")
+            final_cutoff = pd.Timestamp(f"{base_year}-12-31 23:59:59")
+        if i == 0:
+            logger.info(
+                "Using %s split protocol: train=%s..%s, validation=%s..%s, final>%s..%s",
+                args.split_protocol,
+                train_start,
+                train_cutoff,
+                train_cutoff,
+                validation_cutoff,
+                validation_cutoff,
+                final_cutoff,
+            )
+
+        train_chunk = chunk_df[
+            (chunk_df["event_time"] >= train_start)
+            & (chunk_df["event_time"] <= train_cutoff)
+        ]
         if args.evaluation_window == "validation":
             eval_chunk = chunk_df[
                 (chunk_df["event_time"] > train_cutoff)
                 & (chunk_df["event_time"] <= validation_cutoff)
             ]
         else:
-            eval_chunk = chunk_df[chunk_df["event_time"] > validation_cutoff]
+            eval_chunk = chunk_df[
+                (chunk_df["event_time"] > validation_cutoff)
+                & (chunk_df["event_time"] <= final_cutoff)
+            ]
 
-        if args.train_unsup and not train_chunk.empty:
+        validation_chunk = chunk_df[
+            (chunk_df["event_time"] > train_cutoff)
+            & (chunk_df["event_time"] <= validation_cutoff)
+        ]
+
+        if not eval_chunk.empty:
+            eval_chunk = eval_chunk.copy()
+            eval_chunk["scenario_file"] = (
+                source_files[i].name if i < len(source_files) else f"file_{i}"
+            )
+
+        is_holdout = (
+            args.holdout_scenario is not None
+            and i < len(source_files)
+            and source_files[i].name == args.holdout_scenario
+        )
+
+        if args.train_unsup and not train_chunk.empty and not is_holdout:
             unsup_train_frames.append(train_chunk[train_chunk["fault_type"] == FaultType.NORMAL.value])
+        if (
+            args.gmm_target_fpr is not None
+            and not validation_chunk.empty
+            and not is_holdout
+        ):
+            calibration_frames.append(
+                validation_chunk[validation_chunk["fault_type"] == FaultType.NORMAL.value]
+            )
 
-        if args.train_clf and not train_chunk.empty:
+        if args.train_clf and not train_chunk.empty and not is_holdout:
             # Train the classifier on both normal and fault data so it can act as a 
             # standalone multi-class detector.
             if settings.supervised_model.lower() == "tcn":
@@ -158,13 +254,22 @@ def main() -> None:
                 # row positions across structurally similar scenario files.
                 clf_train_frames.append(train_chunk.sample(frac=0.2, random_state=42 + i))
 
-        if not eval_chunk.empty and (uses_detector or args.evaluate):
+        if (
+            not eval_chunk.empty
+            and (uses_detector or args.evaluate)
+            and (args.holdout_scenario is None or is_holdout)
+        ):
             eval_frames.append(eval_chunk)
 
     # ── Phase 2: Differential Training ───────────────────────────────────────
     if args.train_unsup and unsup_train_frames:
         logger.info("Phase 2a: Training %s on 100%% Normal data...", settings.unsupervised_model.upper())
-        _train_unsup(unsup_train_frames, settings)
+        _train_unsup(
+            unsup_train_frames,
+            settings,
+            calibration_frames=calibration_frames,
+            target_fpr=args.gmm_target_fpr,
+        )
 
     if args.train_clf and clf_train_frames:
         logger.info("Phase 2b: Training Classifier on 20%% Sampled data...")
@@ -275,7 +380,7 @@ def main() -> None:
         logger.info("Phase 5: Starting memory-optimized evaluation...")
         mini_frames = []
         for i, df in enumerate(eval_frames):
-            mini = df[["event_time", "zone_id", "fault_type"]].copy()
+            mini = df[["event_time", "zone_id", "fault_type", "scenario_file"]].copy()
             mini["file_index"] = i
             mini_frames.append(mini)
         eval_df_full = pd.concat(mini_frames, ignore_index=True)
@@ -286,6 +391,7 @@ def main() -> None:
             events_df,
             used_classifier=args.use_clf,
             evaluation_window=args.evaluation_window,
+            split_protocol=args.split_protocol,
         )
 
 
@@ -333,6 +439,7 @@ def _run_evaluation_vectorized(
     *,
     used_classifier: bool,
     evaluation_window: str,
+    split_protocol: str,
 ) -> None:
     """Vectorized evaluation to prevent Pandas .apply() memory bombs."""
     if events_df.empty:
@@ -357,10 +464,54 @@ def _run_evaluation_vectorized(
     for fault, metrics in rep.get("per_fault", {}).items():
         logger.info("  %s: recall=%.4f", fault, metrics["recall"])
 
+    logger.info("--- Per-scenario report (%s protocol) ---", split_protocol)
+    for scenario_file, scenario_df in df.groupby("scenario_file", sort=True):
+        is_fault = scenario_df["fault_type"] != FaultType.NORMAL.value
+        if is_fault.all():
+            logger.info(
+                "  %s: n=%d fault_recall=%.4f detected_rows=%d",
+                scenario_file,
+                len(scenario_df),
+                float(scenario_df["detected"].mean()),
+                int(scenario_df["detected"].sum()),
+            )
+        elif (~is_fault).all():
+            logger.info(
+                "  %s: n=%d normal_false_positive_rate=%.4f false_positives=%d",
+                scenario_file,
+                len(scenario_df),
+                float(scenario_df["detected"].mean()),
+                int(scenario_df["detected"].sum()),
+            )
+        else:
+            logger.warning("  %s: mixed ground-truth labels; scenario metrics skipped", scenario_file)
+
+    alert_bursts = _count_alert_bursts(df, gap_minutes=5)
+    logger.info(
+        "Alert bursts (detected rows grouped by file/zone, gap <= 5 min): %d",
+        alert_bursts,
+    )
+
     if used_classifier:
         crep = classification_report_extended(df["fault_type"], df["predicted_fault"])
         logger.info("--- Classification Report (%s window) ---", evaluation_window)
         logger.info("Accuracy: %.4f | Macro F1: %.4f", crep["accuracy"], crep["macro_f1"])
+
+
+def _count_alert_bursts(df: pd.DataFrame, *, gap_minutes: int) -> int:
+    """Count contiguous predicted-alert bursts; no ground-truth event labels are assumed."""
+    detected = df[df["detected"]].sort_values(
+        ["file_index", "zone_id", "event_time"]
+    )
+    if detected.empty:
+        return 0
+    delta = (
+        detected.groupby(["file_index", "zone_id"])["event_time"]
+        .diff()
+        .dt.total_seconds()
+        .div(60)
+    )
+    return int(delta.isna().sum() + (delta > gap_minutes).sum())
 
 
 if __name__ == "__main__":
